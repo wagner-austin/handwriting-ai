@@ -97,6 +97,8 @@ def test_tta_changes_score_for_asymmetric_model() -> None:
         pass
     eng0 = InferenceEngine(s0)
     eng1 = InferenceEngine(s1)
+    from handwriting_ai.preprocess import preprocess_signature
+
     man = ModelManifest(
         schema_version="v1",
         model_id="m",
@@ -104,7 +106,7 @@ def test_tta_changes_score_for_asymmetric_model() -> None:
         n_classes=10,
         version="1",
         created_at=datetime.now(UTC),
-        preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+        preprocess_hash=preprocess_signature(),
         val_acc=0.0,
         temperature=1.0,
     )
@@ -116,5 +118,5 @@ def test_tta_changes_score_for_asymmetric_model() -> None:
     x = torch.zeros((1, 1, 28, 28), dtype=torch.float32)
     out0 = eng0._predict_impl(x)
     out1 = eng1._predict_impl(x)
-    # Without TTA, class 1 confidence near 0.1; with TTA it increases
+    # With rotation+shift TTA, confidence should not decrease
     assert out1.probs[1] >= out0.probs[1]
