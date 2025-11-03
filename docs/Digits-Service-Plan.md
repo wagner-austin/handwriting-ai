@@ -26,7 +26,7 @@ Goal: production-ready, typed, modular service for single-digit OCR via an HTTP 
 **High-Level Architecture**
 - Components
   - API (FastAPI): inference endpoint `/v1/read` (alias `/v1/predict` optional), model info `/v1/models/active`, health `/healthz`, ready `/readyz`, version `/version`.
-  - Inference Engine (CPU): loads a small MNIST model (Torch CPU, ResNet-18, CIFAR-style for 28x28), offloads compute to a bounded thread pool.
+  - Inference Engine (CPU/GPU): ensemble-first loader (multiple models), calibrated probability averaging, advanced TTA by default; bounded thread pool for request concurrency.
   - Test-Time Augmentation (optional): when enabled via `DIGITS__TTA=true`, the engine performs light-weight spatial TTA (small pixel shifts) and averages probabilities for improved robustness.
   - Optional RQ Worker(s) (Phase 2): background training/eval on a `digits` queue.
   - Storage: artifacts dir for models + manifests; logs dir for structured logs.
@@ -35,7 +35,7 @@ Goal: production-ready, typed, modular service for single-digit OCR via an HTTP 
   - DiscordBot <-> handwriting-ai: HTTP POST multipart; no shared runtime deps.
   - Optional: Redis events for training notifications in Phase 2.
 
-**API Specification (Phase 1: Inference-Only)**
+**API Specification (Competition Defaults)**
 - POST `/v1/read`
   - Request: multipart/form-data
     - `file`: PNG or JPEG image
@@ -59,7 +59,7 @@ Goal: production-ready, typed, modular service for single-digit OCR via an HTTP 
     - 422: malformed form
     - 500: system error
 - GET `/healthz` -> `{ "status": "ok" }` (process up)
-- GET `/readyz` -> `{ "status": "ready" }` when model is loaded; include `{ "model_loaded": bool, "model_id": string | null, "manifest_schema_version": string | null, "build": string | null }` otherwise.
+- GET `/readyz` -> `{ "status": "ready" }` when ensemble is loaded; include `{ "model_loaded": bool, "model_id": string | null, "manifest_schema_version": string | null, "build": string | null, "ensemble_size": int | null, "model_ids": list[str] | null }` otherwise.
 - GET `/version` -> `{ "service": "handwriting-ai", "version": string, "build": string, "commit": string }`
 
 - GET `/v1/models/active`
@@ -110,12 +110,11 @@ Error response schema (stable):
 - Resize to 28x28; normalize with MNIST mean/std (0.1307, 0.3081).
 - No fallback branches: if segmentation/normalization fails (e.g., no component found, deskew invalid, angle unreliable), return 400 with a clear error code and message (`preprocessing_failed`).
 
-**Inference Engine**
-- Architecture: ResNet-18 (CIFAR-style) adjusted for 1-channel input and 10 classes; target ~99.6%+ MNIST test accuracy.
-  - 3x3 stem conv, stride 1, no initial 7x7 or stride-2, and no max-pool at the start (CIFAR-style layout for small inputs).
-  - 1-channel stem; standard 2× downsampling occurs within the residual stages as in CIFAR ResNet-18.
-- Calibration: temperature scaling applied post-softmax using held-out validation; `temperature` stored in the model manifest and applied at inference.
-- Test-Time Augmentation (TTA): optional small rotations/translations; disabled by default (`DIGITS__TTA=false`).
+**Inference Engine (Competition-First)**
+- Ensemble-first: load multiple models and average calibrated probabilities across them; `model_id` in responses becomes `ensemble_<N>_models`.
+- Backbones: support ResNet-18 (CIFAR-style, 1-channel) and allow additional SOTA variants (e.g., WideResNet-28-10, DenseNet) adapted for 1-channel.
+- Calibration: temperature scaling per model (logits / temperature → softmax). Optional ensemble override.
+- Advanced TTA: enabled by default (strong profile: multi-shift + small-rotation + light-scale). Profiles configurable.
 - Concurrency model:
   - Use a small, bounded `ThreadPoolExecutor` (size = `APP__THREADS` or CPU core count, see policy below) rather than `asyncio.to_thread`.
   - Rationale: bounded concurrency provides backpressure and predictable latency; one place to instrument queue depth and timings; avoids unbounded task spawning; enables better CPU utilization and easier capping with container limits.
@@ -135,13 +134,15 @@ Error response schema (stable):
   - `APP__PORT=8081`
 - Inference:
   - `DIGITS__MODEL_DIR=/data/digits/models`
-  - `DIGITS__ACTIVE_MODEL=mnist_resnet18_v1` (subfolder under MODEL_DIR)
-  - `DIGITS__TTA=false`
+  - `DIGITS__ACTIVE_MODEL=resnet18_h1,wideresnet_h1,...` (comma-separated, required; each is a subfolder under MODEL_DIR)
+  - `DIGITS__TTA_PROFILE=strong` (`strong`|`none`)
+  - `DIGITS__ENSEMBLE_TEMPERATURE_OVERRIDE=` (optional float)
   - `DIGITS__UNCERTAIN_THRESHOLD=0.70`
   - `DIGITS__MAX_IMAGE_MB=2`
   - `DIGITS__MAX_IMAGE_SIDE_PX=1024`
   - `DIGITS__PREDICT_TIMEOUT_SECONDS=5`
   - `DIGITS__VISUALIZE_MAX_KB=16`
+  - `DEVICE=cpu|cuda` (optional; default cpu)
 - Security (optional):
   - `SECURITY__API_KEY=` (empty disables check)
 - RQ/Redis (Phase 2):
@@ -156,16 +157,17 @@ Error response schema (stable):
 - Pydantic v2 for API I/O models; frozen dataclasses for internal configs/results.
 - Stable preprocess signature hashing stored in manifest; inference validates compatibility.
 
-**Storage & Manifests**
+**Storage & Manifests (v1.1 required)**
 - Layout (under `APP__ARTIFACTS_ROOT`):
   - `digits/<model_id>/model.pt` (primary; ONNX optional later)
   - `digits/<model_id>/manifest.json`
   - `digits/<model_id>/metrics.json`
-- Manifest fields (v1):
-  - `schema_version`, `model_id`, `arch`, `n_classes`, `version`, `created_at`
-  - `preprocess_hash`, `val_acc`, `temperature`
-- Active model selection: `DIGITS__ACTIVE_MODEL` or `current` symlink; service supports safe hot-reload.
-  - Hot-reload note: the service may poll the active path/symlink or manifest mtime and perform a safe swap under a read-write lock when the active model changes.
+- Manifest fields (v1.1, required):
+  - Core: `schema_version`, `model_id`, `arch`, `n_classes`, `version`, `created_at`, `preprocess_hash`, `val_acc`, `temperature`
+  - Training provenance: `training_recipe`, `training_seed`, `training_epochs`, `test_acc`, `recipe_hash`, `parent_model_id` (optional)
+- Service refuses to load manifests not matching v1.1 or with incompatible `preprocess_hash`.
+- Active model selection: `DIGITS__ACTIVE_MODEL` is a comma-separated list; service loads all valid entries.
+  - Hot-reload note: safe swap on change to the active set (optional future enhancement).
 - Retention policy:
   - Keep N=3 recent models and archives; prune older artifacts/logs on deploy or via a scheduled cleanup job.
   - Preserve models referenced by a named tag or in active rotation.
@@ -182,6 +184,8 @@ Error response schema (stable):
   - Bounded `ThreadPoolExecutor` limits concurrent inference; overflow requests queue, and the global request timeout governs overall behavior.
   - Server-level upload limit: enforce request body limits at the edge (e.g., reverse proxy `client_max_body_size`) to drop oversize uploads before application code executes.
   - Strict multipart parser limits: cap number of fields and per-part size to prevent parser abuse.
+  - Readiness metadata includes `ensemble_size` and `model_ids` for quick debugging.
+  - Railway deployment: provision memory for multiple models; uvicorn `--workers 1` recommended; tune `APP__THREADS` to hardware.
 
 **Security**
 - Validate MIME and decode safely via Pillow; strip metadata; enforce size and dimension caps.
@@ -216,10 +220,10 @@ Error response schema (stable):
 - Types: mypy strict across `src/` and `tests/`; no Any/casts.
 
 **Phased Implementation**
-- Phase 1 (Inference-only MVP)
-  - Project scaffolding (Poetry, pyproject, Ruff/Mypy), app factory, `/healthz` + `/readyz`, `/v1/predict`, ResNet-18 CPU model loader, tests, Dockerfile. Initial model artifact prepared offline; manifest includes calibration temperature.
-- Phase 2 (Training + RQ)
-  - Add training endpoints and worker(s), enqueuer adapter, events, manifests/metrics, per-run logs; degraded readiness when workers absent.
+- Competition-first rollout
+  - Implement ensemble-first inference and strong TTA defaults; expose configuration to tune profiles and ensemble temperature.
+  - Extend manifest parsing to v1.1 (required) with training provenance; update `/v1/models/active` and readiness to include ensemble details.
+  - Add optional training endpoints and workers to produce v1.1 artifacts with recipes and seeds.
   - Events schema (digits:events):
     - completed
       ```json
@@ -232,14 +236,17 @@ Error response schema (stable):
 
 **Decision Records (ADR)**
 - ADR-001: Service split vs bot cog — choose standalone service for isolation and speed of iteration; bot remains thin.
-- ADR-002: Model format — Torch CPU for MVP; ONNX export optional depending on latency.
-- ADR-003: Config style — pydantic-settings with nested envs; optional TOML override.
-- ADR-004: Concurrency — use a bounded `ThreadPoolExecutor` instead of `asyncio.to_thread` for backpressure and predictable latency.
+- ADR-002: Model/inference — Ensemble-first with strong TTA default for competition.
+- ADR-003: Manifests — Require v1.1 with training provenance; refuse incompatible artifacts.
+- ADR-004: Config style — pydantic-settings with nested envs; optional TOML override.
+- ADR-005: Concurrency — bounded `ThreadPoolExecutor`, `torch.set_num_threads(1)`, uvicorn `--workers 1`.
 
 **Acceptance Criteria**
 - Strict typing (no Any/cast), Ruff clean; tests for core paths; reproducible inference.
-- `/healthz` ok; `/readyz` becomes ready after model load (includes model_id/schema_version/build). `/v1/read` handles PNG/JPEG, size/type/dimension limits, timeouts.
-- DiscordBot integration works locally using `HANDWRITING_API_URL` and returns: `Digit: X (YY.Y% confidence). Top-3: ...` with top-3 probabilities and model id.
+- `/healthz` ok; `/readyz` ready only when an ensemble (>=1 model) loads; readiness returns `ensemble_size` and `model_ids`.
+- `/v1/read` handles PNG/JPEG, limits, timeouts; returns calibrated, ensemble-averaged probabilities; `model_id=ensemble_<N>_models`.
+- `/v1/models/active` exposes v1.1 manifest fields and model list; non‑v1.1 manifests are rejected.
+- Discord `/read` returns: `Digit: X (YY.Y% confidence). Top-3: ...` with top‑3 probabilities and ensemble id.
 
 **Performance Targets (on laptop i9 CPU, TTA off)**
 - P50 latency: < 20 ms per request
