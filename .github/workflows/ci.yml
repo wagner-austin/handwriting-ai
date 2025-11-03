@@ -38,11 +38,9 @@ jobs:
       - name: Install dependencies (dev)
         run: poetry install --with dev
 
-      - name: Lint + typecheck + tests
+      - name: Lint + typecheck + tests (guards included)
         run: make check
 
-      - name: Guards (no Any/cast/ignore)
-        run: make guards
 
       - name: YAML lint
         if: hashFiles('.yamllint') != ''

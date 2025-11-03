@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lock serve test lint check start stop clean guards
+.PHONY: help install install-dev lock serve test lint check start stop clean
 
 help:
 	@echo "Targets:"
@@ -11,7 +11,7 @@ help:
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
 	@echo "  make clean       - Prune and rebuild compose stack"
-	@echo "  make guards      - Guardrails: fail on Any/cast/ignore"
+	@echo "  (guards run inside make lint)"
 
 install:
 	poetry lock
@@ -32,11 +32,10 @@ lint: install-dev
 	poetry run ruff check . --fix
 	poetry run ruff format .
 	poetry run mypy
+ 	poetry run python scripts/guard_checks.py
 
 check: lint | test
 
-guards:
-	poetry run python scripts/guard_checks.py
 
 start:
 	docker compose up -d --build
