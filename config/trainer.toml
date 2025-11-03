@@ -4,10 +4,10 @@ data_root = "./data/mnist"
 out_dir = "./artifacts/digits/models"
 model_id = "mnist_resnet18_v1"
 
-# ~6 hours target: adjust epochs to fit your machine speed
+# ~6 hours target: calibrate with 1 epoch, then set epochs accordingly
 epochs = 120
-batch_size = 256
-lr = 0.001
+batch_size = 512
+lr = 0.0015
 weight_decay = 0.01
 seed = 42
 device = "cpu"
@@ -18,11 +18,10 @@ step_size = 10
 gamma = 0.5
 min_lr = 1e-5
 
-patience = 15
+patience = 12
 min_delta = 0.0005
 
 threads = 16
 augment = true
 aug_rotate = 12.0
 aug_translate = 0.1
-
