@@ -13,7 +13,9 @@ from .inference.types import PreprocessOutput
 
 _MNIST_MEAN: Final[float] = 0.1307
 _MNIST_STD: Final[float] = 0.3081
-_PREPROCESS_SIGNATURE: Final[str] = "v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm"
+_PREPROCESS_SIGNATURE: Final[str] = (
+    "v1/grayscale+otsu+lcc+deskew{angle_conf}+center+resize28+mnistnorm"
+)
 _ANGLE_CONF_MIN: Final[float] = 0.02
 
 
