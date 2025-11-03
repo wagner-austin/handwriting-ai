@@ -24,7 +24,7 @@ COPY pyproject.toml poetry.lock /app/
 COPY src /app/src
 COPY config /app/config
 COPY scripts/prestart.py /app/scripts/prestart.py
-COPY artifacts /seed
+COPY seed /seed
 COPY README.md /app/README.md
 
 # Install deps (no dev) into venv managed by poetry
