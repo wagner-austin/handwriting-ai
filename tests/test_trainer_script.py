@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import Protocol
 
 from PIL import Image
-from scripts.train_mnist_resnet18 import MNISTLike, _PreprocessDataset
+
+from handwriting_ai.training.mnist_train import MNISTLike, _PreprocessDataset
 
 
 class _Base(Protocol):
