@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import io
+import threading
 import time
 from collections.abc import Callable
 from typing import Annotated, Protocol
@@ -10,6 +11,7 @@ from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
 from fastapi.params import Depends as DependsParamType
 from fastapi.responses import JSONResponse
 from PIL import Image, ImageFile, UnidentifiedImageError
+from starlette.datastructures import FormData
 
 from ..config import Limits, Settings
 from ..errors import AppError, ErrorCode, new_error, status_for
@@ -22,6 +24,44 @@ from ..version import get_version
 from .schemas import PredictResponse
 
 ImageFile.LOAD_TRUNCATED_IMAGES = False
+
+
+def _setup_optional_reloader(
+    app: FastAPI, engine: InferenceEngine, reload_interval_seconds: float | None
+) -> None:
+    """Optionally attach a background reloader for model artifacts.
+
+    If `reload_interval_seconds` is falsy or non-positive, no handlers are added.
+    """
+    if reload_interval_seconds is None or float(reload_interval_seconds) <= 0.0:
+        return
+
+    stop_evt: threading.Event | None = None
+    thread: threading.Thread | None = None
+
+    def _start_bg_reloader() -> None:
+        nonlocal stop_evt, thread
+        stop_evt = threading.Event()
+
+        def _loop() -> None:
+            interval = float(reload_interval_seconds)
+            # Use wait on the event to allow prompt shutdown
+            while not stop_evt.is_set():
+                engine.reload_if_changed()
+                stop_evt.wait(interval)
+
+        thread = threading.Thread(target=_loop, name="model-reloader", daemon=True)
+        thread.start()
+
+    def _stop_bg_reloader() -> None:
+        nonlocal stop_evt, thread
+        if stop_evt is not None:
+            stop_evt.set()
+        if thread is not None:
+            thread.join(timeout=1.0)
+
+    app.add_event_handler("startup", _start_bg_reloader)
+    app.add_event_handler("shutdown", _stop_bg_reloader)
 
 
 # Exception handlers (module-level to keep app factory simple)
@@ -102,6 +142,61 @@ def _raise_if_too_large(raw: bytes, limits: Limits) -> None:
         )
 
 
+def _strict_validate_multipart(form: FormData) -> None:
+    # Reject any unexpected form fields
+    for key in form:
+        if key != "file":
+            raise AppError(
+                ErrorCode.malformed_multipart,
+                status_for(ErrorCode.malformed_multipart),
+                "Unexpected form field",
+            )
+    # Require exactly one file part
+    n_files = len(form.getlist("file"))
+    if n_files != 1:
+        raise AppError(
+            ErrorCode.malformed_multipart,
+            status_for(ErrorCode.malformed_multipart),
+            "Multiple file parts not allowed" if n_files > 1 else "Missing file part",
+        )
+
+
+def _open_image_bytes(raw: bytes) -> Image.Image:
+    try:
+        return Image.open(io.BytesIO(raw))
+    except UnidentifiedImageError as _err:
+        raise AppError(
+            ErrorCode.invalid_image,
+            status_for(ErrorCode.invalid_image),
+            "Failed to decode image",
+        ) from None
+    except Image.DecompressionBombError as _err:
+        raise AppError(
+            ErrorCode.too_large,
+            status_for(ErrorCode.too_large),
+            "Decompression bomb triggered",
+        ) from None
+
+
+def _validate_image_dimensions(img: Image.Image, limits: Limits) -> None:
+    w, h = img.size
+    if max(w, h) > limits.max_side_px:
+        raise AppError(
+            ErrorCode.bad_dimensions,
+            status_for(ErrorCode.bad_dimensions),
+            "Image dimensions too large",
+        )
+
+
+def _ensure_supported_content_type(ctype: str) -> None:
+    if ctype not in ("image/png", "image/jpeg", "image/jpg"):
+        raise AppError(
+            ErrorCode.unsupported_media_type,
+            status_for(ErrorCode.unsupported_media_type),
+            "Only PNG and JPEG are supported",
+        )
+
+
 def _register_read(
     app: FastAPI,
     dep_api_key: Callable[[str | None], None],
@@ -110,6 +205,7 @@ def _register_read(
     provide_limits: Callable[[], Limits],
 ) -> None:
     async def _read_digit(
+        request: Request,
         file: Annotated[UploadFile, File(...)],
         invert: bool | None = None,
         center: bool = True,
@@ -120,13 +216,11 @@ def _register_read(
         settings = provide_settings()
         limits = provide_limits()
 
+        # Enforce strict multipart structure: exactly one 'file' part and no extras.
+        form = await request.form()
+        _strict_validate_multipart(form)
         ctype = (file.content_type or "").lower()
-        if ctype not in ("image/png", "image/jpeg", "image/jpg"):
-            raise AppError(
-                ErrorCode.unsupported_media_type,
-                status_for(ErrorCode.unsupported_media_type),
-                "Only PNG and JPEG are supported",
-            )
+        _ensure_supported_content_type(ctype)
 
         if content_length is not None and content_length > limits.max_bytes:
             raise AppError(
@@ -137,29 +231,9 @@ def _register_read(
 
         raw = await file.read()
         _raise_if_too_large(raw, limits)
+        img = _open_image_bytes(raw)
 
-        try:
-            img = Image.open(io.BytesIO(raw))
-        except UnidentifiedImageError as _err:
-            raise AppError(
-                ErrorCode.invalid_image,
-                status_for(ErrorCode.invalid_image),
-                "Failed to decode image",
-            ) from None
-        except Image.DecompressionBombError as _err:
-            raise AppError(
-                ErrorCode.too_large,
-                status_for(ErrorCode.too_large),
-                "Decompression bomb triggered",
-            ) from None
-
-        w, h = img.size
-        if max(w, h) > limits.max_side_px:
-            raise AppError(
-                ErrorCode.bad_dimensions,
-                status_for(ErrorCode.bad_dimensions),
-                "Image dimensions too large",
-            )
+        _validate_image_dimensions(img, limits)
 
         opts = PreprocessOptions(
             invert=invert,
@@ -233,13 +307,26 @@ def _register_read(
 def create_app(
     settings: Settings | None = None,
     engine_provider: Callable[[], InferenceEngine] | None = None,
+    *,
+    reload_interval_seconds: float | None = None,
 ) -> FastAPI:
+    """Application factory.
+
+    Parameters:
+    - `settings`: Optional pre-loaded settings; when omitted, loads defaults.
+    - `engine_provider`: Optional provider for a custom `InferenceEngine` (primarily for tests).
+    - `reload_interval_seconds`: When provided and > 0, starts a background thread on startup
+      that periodically calls `engine.reload_if_changed()` to pick up model artifact changes.
+    """
     s = settings or Settings.load()
     init_logging()
     app = FastAPI(title="handwriting-ai", version=get_version().version)
     app.add_middleware(RequestIdMiddleware)
 
-    engine = _create_engine(s)
+    # Build shared engine instance (or use provided one) used across routes and reloader
+    engine: InferenceEngine = (
+        engine_provider() if engine_provider is not None else _create_engine(s)
+    )
     limits = Limits.from_settings(s)
     _api_key_dep = api_key_dependency(s)
 
@@ -264,9 +351,11 @@ def create_app(
     _register_basic(app, engine)
     _register_models(app, engine)
 
-    # Allow explicit injection of a custom engine provider for tests
-    _eng_provider = engine_provider if engine_provider is not None else _provide_engine
-    _register_read(app, _api_key_dep, _eng_provider, _provide_settings, _provide_limits)
+    # Route registrations and dependencies
+    _register_read(app, _api_key_dep, _provide_engine, _provide_settings, _provide_limits)
+
+    # Optional background reloader for model artifacts
+    _setup_optional_reloader(app, engine, reload_interval_seconds)
 
     return app
 
