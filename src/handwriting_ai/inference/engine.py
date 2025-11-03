@@ -105,7 +105,11 @@ class InferenceEngine:
             # Refuse to load incompatible model
             return
         # Build model arch per manifest and load weights strictly
-        model = _build_model(arch=manifest.arch, n_classes=int(manifest.n_classes))
+        try:
+            model = _build_model(arch=manifest.arch, n_classes=int(manifest.n_classes))
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError):
+            self._logger.info("model_build_failed")
+            return
         try:
             sd = _load_state_dict_file(model_path)
         except _LOAD_ERRORS:
@@ -138,10 +142,8 @@ class InferenceEngine:
         art = self._artifacts_dir
         if art is None:
             return False
-        manifest_path = (art / "manifest.json") if art else None
-        model_path = (art / "model.pt") if art else None
-        if manifest_path is None or model_path is None:
-            return False
+        manifest_path = art / "manifest.json"
+        model_path = art / "model.pt"
         try:
             m1 = manifest_path.stat().st_mtime
             m2 = model_path.stat().st_mtime
@@ -237,12 +239,35 @@ def _augment_for_tta(x: Tensor) -> Tensor:
     if x.ndim != 4:
         return x
     # Identity + small shifts
-    batch = [x]
+    batch: list[Tensor] = [x]
     batch.append(torch.roll(x, shifts=(0, 1), dims=(2, 3)))  # right by 1
     batch.append(torch.roll(x, shifts=(0, -1), dims=(2, 3)))  # left by 1
     batch.append(torch.roll(x, shifts=(1, 0), dims=(2, 3)))  # down by 1
     batch.append(torch.roll(x, shifts=(-1, 0), dims=(2, 3)))  # up by 1
+    # Add small rotations for variety
+    for ang in (-6.0, -3.0, 3.0, 6.0):
+        batch.append(_rotate_tensor(x, degrees=float(ang)))
     return torch.cat(batch, dim=0)
+
+
+def _rotate_tensor(x: Tensor, degrees: float) -> Tensor:
+    import math
+
+    import torch.nn.functional as F  # noqa: N812 (torch uses capital alias)
+
+    # x: (B=1, C=1, H, W)
+    b, c, h, w = int(x.shape[0]), int(x.shape[1]), int(x.shape[2]), int(x.shape[3])
+    theta = torch.zeros((b, 2, 3), dtype=x.dtype, device=x.device)
+    rad = float(degrees) * math.pi / 180.0
+    cos_a = math.cos(rad)
+    sin_a = math.sin(rad)
+    theta[:, 0, 0] = float(cos_a)
+    theta[:, 0, 1] = float(-sin_a)
+    theta[:, 1, 0] = float(sin_a)
+    theta[:, 1, 1] = float(cos_a)
+    size_list: list[int] = [b, c, h, w]
+    grid = F.affine_grid(theta, size=size_list, align_corners=False)
+    return F.grid_sample(x, grid, mode="bilinear", padding_mode="zeros", align_corners=False)
 
 
 if TYPE_CHECKING:
