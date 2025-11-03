@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lock serve test lint check start stop clean train
+.PHONY: help install install-dev lock serve test lint check start stop clean train seed-model
 
 # Port configuration: use APP__PORT if set, otherwise default to 8081
 PORT := $(if $(APP__PORT),$(APP__PORT),8081)
@@ -12,6 +12,7 @@ help:
 	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
 	@echo "  make train       - Train MNIST model (PowerShell-friendly)"
+	@echo "  make seed-model  - Copy trained model from artifacts/ to seed/ for Docker image seeding"
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
 	@echo "  make clean       - Prune and rebuild compose stack"
@@ -63,6 +64,14 @@ train: install-dev
 		--lr $(LR) \
 		--seed $(SEED) \
 		--device $(DEVICE)
+
+# Copy a trained artifact from artifacts/ to seed/ so Dockerfile can bake it into /seed.
+# Usage (PowerShell): make seed-model MODEL_ID=mnist_resnet18_v1
+SEED_SRC ?= ./artifacts/digits/models
+SEED_DST ?= ./seed/digits/models
+
+seed-model:
+	poetry run python scripts/seed_model.py --model-id "$(MODEL_ID)" --from-dir "$(SEED_SRC)" --to-dir "$(SEED_DST)"
 
 
 start:
