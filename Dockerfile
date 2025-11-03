@@ -20,15 +20,15 @@ RUN pip install --no-cache-dir poetry==1.8.3
 # Copy lockfiles first for better layer caching
 COPY pyproject.toml /app/
 
-# Install deps (no dev) into venv managed by poetry
-RUN poetry config virtualenvs.create true \
- && poetry config virtualenvs.in-project true \
- && poetry install --no-root --no-interaction --no-ansi
-
 # Copy the rest of the project (app src, configs, docs as needed)
 COPY src /app/src
 COPY config /app/config
 COPY README.md /app/README.md
+
+# Install deps (no dev) into venv managed by poetry
+RUN poetry config virtualenvs.create true \
+ && poetry config virtualenvs.in-project true \
+ && poetry install --only main --no-interaction --no-ansi
 
 EXPOSE 8081
 
