@@ -6,7 +6,7 @@ Quality Gates
 - Make targets:
   - `make install` / `make install-dev`
   - `make serve` – runs uvicorn for the FastAPI app
-  - `make lint` – ruff fix + format + mypy (strict)
+  - `make lint` – ruff fix + format + mypy (strict) + yamllint
   - `make test` – pytest with coverage (`--cov=src`)
   - `make check` – lint + test
   - `make guards` – fail build if `typing.Any`, `typing.cast`, or `type: ignore` are present
