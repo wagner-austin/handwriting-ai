@@ -107,7 +107,15 @@ def test_make_loaders_and_train_epoch_augment(tmp_path: Path) -> None:
     # training DataLoader yields Tensor labels
     model = _build_model()
     opt, _ = _build_optimizer_and_scheduler(model, cfg)
-    loss = _train_epoch(model, train_loader, torch.device("cpu"), opt)
+    loss = _train_epoch(
+        model,
+        train_loader,
+        torch.device("cpu"),
+        opt,
+        ep=1,
+        ep_total=1,
+        total_batches=len(train_loader),
+    )
     assert isinstance(loss, float)
 
 
@@ -173,6 +181,9 @@ def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
         train_loader: Iterable[tuple[Tensor, Tensor]],
         device: torch.device,
         optimizer: Optimizer,
+        ep: int,
+        ep_total: int,
+        total_batches: int,
     ) -> float:
         raise KeyboardInterrupt
 

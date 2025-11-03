@@ -209,6 +209,9 @@ def _train_epoch(
     train_loader: Iterable[tuple[Tensor, Tensor]],
     device: torch.device,
     optimizer: Optimizer,
+    ep: int,
+    ep_total: int,
+    total_batches: int,
 ) -> float:
     import time as _time
 
@@ -244,8 +247,10 @@ def _train_epoch(
             dt = _time.perf_counter() - t0
             ips = (int(y.size(0)) / dt) if dt > 0 else 0.0
             log.info(
-                f"train_batch_done idx={batch_idx} batch_loss={float(loss.item()):.4f} "
-                f"batch_acc={batch_acc:.4f} avg_loss={avg_loss:.4f} ips={ips:.1f}"
+                f"train_batch_done epoch={ep}/{ep_total} "
+                f"batch={batch_idx+1}/{total_batches} "
+                f"batch_loss={float(loss.item()):.4f} batch_acc={batch_acc:.4f} "
+                f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f}"
             )
     return loss_sum / total if total > 0 else 0.0
 
@@ -284,7 +289,15 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
         for ep in range(1, cfg.epochs + 1):
             t0 = _time.perf_counter()
             log.info(f"epoch_start_{ep}_{cfg.epochs}")
-            train_loss = _train_epoch(model, train_loader, device, optimizer)
+            train_loss = _train_epoch(
+                model,
+                train_loader,
+                device,
+                optimizer,
+                ep=ep,
+                ep_total=cfg.epochs,
+                total_batches=len(train_loader),
+            )
             val_acc = _evaluate(model, test_loader, device)
             dt = _time.perf_counter() - t0
             log.info(

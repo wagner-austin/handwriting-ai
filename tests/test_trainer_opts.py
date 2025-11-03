@@ -86,7 +86,15 @@ def test_train_epoch_smoke_with_fake_data() -> None:
     cfg = _base_cfg()
     optimizer, _ = _build_optimizer_and_scheduler(model, cfg)
     device = torch.device("cpu")
-    loss = _train_epoch(model, loader, device, optimizer)
+    loss = _train_epoch(
+        model,
+        loader,
+        device,
+        optimizer,
+        ep=1,
+        ep_total=1,
+        total_batches=len(loader),
+    )
     assert isinstance(loss, float)
     assert loss >= 0.0
 
