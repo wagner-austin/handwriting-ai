@@ -220,19 +220,19 @@ def _train_epoch(
     for batch_idx, (x, y) in enumerate(train_loader):
         t0 = _time.perf_counter()
         if batch_idx % log_every == 0:
-            log.info(f"train_loading_batch idx={batch_idx}")
+            log.debug(f"train_loading_batch idx={batch_idx}")
         x = x.to(device)
         y = y.to(device)
         if batch_idx % log_every == 0:
-            log.info("train_forward")
+            log.debug("train_forward")
         optimizer.zero_grad(set_to_none=True)
         logits = model(x)
         loss = F.cross_entropy(logits, y)
         if batch_idx % log_every == 0:
-            log.info("train_backward")
+            log.debug("train_backward")
         torch.autograd.backward((loss,))
         if batch_idx % log_every == 0:
-            log.info("train_step")
+            log.debug("train_step")
         optimizer.step()
         total += y.size(0)
         loss_sum += float(loss.item()) * y.size(0)

@@ -184,7 +184,23 @@ def main() -> None:
     log.info(
         f"mnist_loaded train={len(train_base)} test={len(test_base)} batch_size={cfg.batch_size}"
     )
-    train_with_config(cfg, (train_base, test_base))
+    # Calibration mode: run 1 epoch automatically to time and recommend epochs
+    if int(cfg.epochs) == 1:
+        import time as _time
+
+        t0 = _time.perf_counter()
+        train_with_config(cfg, (train_base, test_base))
+        dt = _time.perf_counter() - t0
+        hours = dt / 3600.0
+        target_hours = 6.0
+        # Round down to be safe
+        rec_epochs = int(target_hours / hours) if hours > 0 else 0
+        log.info(
+            f"calibration_epoch_time_s={dt:.1f} target_hours={target_hours:.1f} "
+            f"recommended_epochs={rec_epochs}"
+        )
+    else:
+        train_with_config(cfg, (train_base, test_base))
 
 
 if __name__ == "__main__":  # pragma: no cover - script entry
