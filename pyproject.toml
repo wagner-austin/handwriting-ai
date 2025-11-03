@@ -76,8 +76,12 @@ check_untyped_defs = true
 no_implicit_reexport = true
 show_error_codes = true
 pretty = true
-files = ["src"]
+files = ["src", "tests"]
 plugins = ["pydantic.mypy"]
+
+# Narrow, explicit relaxations for third‑party integration boundaries to avoid false Any from
+# external stubs, while keeping our codebase free of Any/casts/ignores.
+ 
 
 [tool.coverage.run]
 source = ["src"]
@@ -86,4 +90,3 @@ omit = ["tests/*"]
 [tool.coverage.report]
 precision = 2
 show_missing = true
-
