@@ -1,0 +1,20 @@
+# yamllint disable rule:new-lines rule:new-line-at-end-of-file
+---
+extends: default
+
+ignore: |
+  .venv/
+  venv/
+  node_modules/
+  __pycache__/
+
+rules:
+  line-length:
+    max: 120
+    level: warning
+  new-lines:
+    type: unix
+
+  truthy:
+    allowed-values: ['true', 'false', 'yes', 'no', 'on', 'off']
+
