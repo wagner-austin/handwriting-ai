@@ -31,12 +31,12 @@ def api_key_dependency(settings: Settings) -> Callable[[str | None], None]:
     required_key = settings.security.api_key.strip()
     if required_key == "":
         # No-op dependency when key is not configured; keep header signature optional
-        def _pass(x_api_key: str | None = Header(default=None, convert_underscores=False)) -> None:
+        def _pass(x_api_key: str | None = Header(default=None, convert_underscores=True)) -> None:
             return None
 
         return _pass
 
-    def _check(x_api_key: str | None = Header(default=None, convert_underscores=False)) -> None:
+    def _check(x_api_key: str | None = Header(default=None, convert_underscores=True)) -> None:
         rid = request_id_var.get()
         if x_api_key is None or x_api_key != required_key:
             # 401 with standardized body

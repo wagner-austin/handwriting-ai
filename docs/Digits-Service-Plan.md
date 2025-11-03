@@ -27,6 +27,7 @@ Goal: production-ready, typed, modular service for single-digit OCR via an HTTP 
 - Components
   - API (FastAPI): inference endpoint `/v1/read` (alias `/v1/predict` optional), model info `/v1/models/active`, health `/healthz`, ready `/readyz`, version `/version`.
   - Inference Engine (CPU): loads a small MNIST model (Torch CPU, ResNet-18, CIFAR-style for 28x28), offloads compute to a bounded thread pool.
+  - Test-Time Augmentation (optional): when enabled via `DIGITS__TTA=true`, the engine performs light-weight spatial TTA (small pixel shifts) and averages probabilities for improved robustness.
   - Optional RQ Worker(s) (Phase 2): background training/eval on a `digits` queue.
   - Storage: artifacts dir for models + manifests; logs dir for structured logs.
   - Redis (Phase 2): for jobs and events channel `digits:events`.
@@ -60,6 +61,25 @@ Goal: production-ready, typed, modular service for single-digit OCR via an HTTP 
 - GET `/healthz` -> `{ "status": "ok" }` (process up)
 - GET `/readyz` -> `{ "status": "ready" }` when model is loaded; include `{ "model_loaded": bool, "model_id": string | null, "manifest_schema_version": string | null, "build": string | null }` otherwise.
 - GET `/version` -> `{ "service": "handwriting-ai", "version": string, "build": string, "commit": string }`
+
+- GET `/v1/models/active`
+  - Returns information about the currently loaded model and readiness.
+  - Response 200 JSON when model is loaded:
+    - `model_loaded: true`
+    - `model_id: string`
+    - `arch: string` (e.g., `resnet18`)
+    - `n_classes: int` (e.g., 10)
+    - `version: string` (model artifact version)
+    - `created_at: string` (ISO 8601)
+    - `schema_version: string` (manifest schema)
+    - `val_acc: float` (validation accuracy from training manifest)
+    - `temperature: float` (applied to logits before softmax)
+  - Response 200 JSON when not loaded:
+    - `model_loaded: false`
+    - `model_id: null`
+
+Notes:
+- TTA: Enable by setting environment variable `DIGITS__TTA=true` (or `1`). This performs a small set of 1-pixel shifts around the input and averages probabilities before returning results. Disabled by default for latency predictability.
 
 Error response schema (stable):
 - Body: `{ "code": string, "message": string, "request_id": string }`

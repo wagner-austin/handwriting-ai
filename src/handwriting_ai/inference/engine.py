@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
+import pickle
 import threading
+import zipfile
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Final, Protocol
+from pathlib import Path
+from typing import TYPE_CHECKING, Final, Protocol
 
 import torch
+from torch import Tensor
 
 from ..config import Settings
 from ..logging import get_logger
@@ -12,6 +17,15 @@ from .manifest import ModelManifest
 from .types import PredictOutput
 
 _MNIST_N_CLASSES: Final[int] = 10
+_LOAD_ERRORS: Final[tuple[type[BaseException], ...]] = (
+    OSError,
+    ValueError,
+    RuntimeError,
+    TypeError,
+    EOFError,
+    pickle.UnpicklingError,
+    zipfile.BadZipFile,
+)
 
 
 class InferenceEngine:
@@ -38,10 +52,10 @@ class InferenceEngine:
     def manifest(self) -> ModelManifest | None:
         return self._manifest
 
-    def submit_predict(self, preprocessed: torch.Tensor) -> Future[PredictOutput]:
+    def submit_predict(self, preprocessed: Tensor) -> Future[PredictOutput]:
         return self._pool.submit(self._predict_impl, preprocessed)
 
-    def _predict_impl(self, preprocessed: torch.Tensor) -> PredictOutput:
+    def _predict_impl(self, preprocessed: Tensor) -> PredictOutput:
         # Lazy failure if model not ready
         man = self._manifest
         model_obj = self._model
@@ -50,11 +64,13 @@ class InferenceEngine:
 
         # Defer Tensor handling to Torch with type as object to satisfy typing constraints
         tensor = _as_torch_tensor(preprocessed)
+        # Test-time augmentation: average predictions across small shifts
+        batch = _augment_for_tta(tensor) if self._settings.digits.tta else tensor
         model_obj.eval()
         with torch.no_grad():
-            logits_obj = model_obj(tensor)
+            logits_obj = model_obj(batch)
         temperature = float(man.temperature)
-        probs_vec = _softmax(logits_obj, temperature)
+        probs_vec = _softmax_avg(logits_obj, temperature)
         probs_py = tuple(float(x) for x in probs_vec)
         top_idx = 0
         best = probs_py[0]
@@ -71,7 +87,8 @@ class InferenceEngine:
         if not model_dir.exists():
             return
         manifest_path = model_dir / "manifest.json"
-        if not manifest_path.exists():
+        model_path = model_dir / "model.pt"
+        if not (manifest_path.exists() and model_path.exists()):
             return
         try:
             manifest = ModelManifest.from_path(manifest_path)
@@ -84,8 +101,19 @@ class InferenceEngine:
         if manifest.preprocess_hash != preprocess_signature():
             # Refuse to load incompatible model
             return
-        # Build model arch per manifest (weights management handled separately)
+        # Build model arch per manifest and load weights strictly
         model = _build_model(arch=manifest.arch, n_classes=int(manifest.n_classes))
+        try:
+            sd = _load_state_dict_file(model_path)
+        except _LOAD_ERRORS:
+            logging.getLogger("handwriting_ai").info("state_dict_load_failed")
+            return
+        try:
+            _validate_state_dict(sd, manifest.arch, int(manifest.n_classes))
+            model.load_state_dict(sd)
+        except ValueError:
+            self._logger.info("state_dict_invalid")
+            return
         with self._model_lock:
             self._model = model
             self._manifest = manifest
@@ -103,26 +131,54 @@ def _make_pool(settings: Settings) -> ThreadPoolExecutor:
 
 
 class TorchModel(Protocol):
-    def eval(self) -> None: ...
-    def __call__(self, x: torch.Tensor) -> torch.Tensor: ...
+    def eval(self) -> object: ...
+    def __call__(self, x: Tensor) -> Tensor: ...
+    def load_state_dict(self, sd: dict[str, Tensor]) -> object: ...
 
 
-def _build_model(arch: str, n_classes: int) -> TorchModel:
-    class _ZeroModel:
-        def __init__(self, classes: int) -> None:
-            self._classes = int(classes)
+if TYPE_CHECKING:
 
-        def eval(self) -> None:
-            return None
+    def _build_model(arch: str, n_classes: int) -> TorchModel: ...
+else:
 
-        def __call__(self, x: torch.Tensor) -> torch.Tensor:
-            b = int(x.shape[0]) if x.ndim >= 1 else 1
-            return torch.zeros((b, self._classes), dtype=torch.float32)
+    def _build_model(arch: str, n_classes: int) -> TorchModel:
+        import importlib
 
-    return _ZeroModel(n_classes)
+        import torch.nn as nn
+
+        tv_models = importlib.import_module("torchvision.models")
+        fn_obj = getattr(tv_models, "resnet18", None)
+        if not callable(fn_obj):
+            raise RuntimeError("torchvision.models.resnet18 is not callable")
+        inner = fn_obj(weights=None, num_classes=int(n_classes))
+        # CIFAR-style stem and 1-channel, if attributes exist
+        if hasattr(inner, "conv1"):
+            inner.conv1 = nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
+        if hasattr(inner, "maxpool"):
+            inner.maxpool = nn.Identity()
+        return inner
 
 
-def _as_torch_tensor(x: torch.Tensor) -> torch.Tensor:
+if TYPE_CHECKING:
+
+    def build_fresh_state_dict(arch: str, n_classes: int) -> dict[str, Tensor]: ...
+else:
+
+    def build_fresh_state_dict(arch: str, n_classes: int) -> dict[str, Tensor]:
+        m = _build_model(arch=arch, n_classes=n_classes)
+        sd_obj = m.state_dict()
+        if not isinstance(sd_obj, dict):
+            raise RuntimeError("state_dict() did not return a dict")
+        out: dict[str, Tensor] = {}
+        for k, v in sd_obj.items():
+            if isinstance(k, str) and torch.is_tensor(v):
+                out[k] = v
+            else:
+                raise RuntimeError("invalid state dict entry from model")
+        return out
+
+
+def _as_torch_tensor(x: Tensor) -> Tensor:
     t = x
     if t.ndim == 3:
         # Expect 1x28x28 -> add batch
@@ -130,8 +186,69 @@ def _as_torch_tensor(x: torch.Tensor) -> torch.Tensor:
     return t.to(dtype=torch.float32)
 
 
-def _softmax(logits: torch.Tensor, temperature: float) -> list[float]:
+def _softmax_avg(logits: Tensor, temperature: float) -> list[float]:
     logits_t = logits / temperature
     probs = torch.softmax(logits_t, dim=1)
-    n = int(probs.shape[1])
-    return [float(probs[0, i].item()) for i in range(n)]
+    mean_probs = probs.mean(dim=0) if probs.ndim == 2 and probs.shape[0] > 1 else probs[0]
+    n = int(mean_probs.shape[0])
+    return [float(mean_probs[i].item()) for i in range(n)]
+
+
+def _augment_for_tta(x: Tensor) -> Tensor:
+    # Input is 4D (1,1,28,28)
+    if x.ndim != 4:
+        return x
+    # Identity + small shifts
+    batch = [x]
+    batch.append(torch.roll(x, shifts=(0, 1), dims=(2, 3)))  # right by 1
+    batch.append(torch.roll(x, shifts=(0, -1), dims=(2, 3)))  # left by 1
+    batch.append(torch.roll(x, shifts=(1, 0), dims=(2, 3)))  # down by 1
+    batch.append(torch.roll(x, shifts=(-1, 0), dims=(2, 3)))  # up by 1
+    return torch.cat(batch, dim=0)
+
+
+if TYPE_CHECKING:
+
+    def _load_state_dict_file(path: Path) -> dict[str, Tensor]: ...
+else:
+
+    def _load_state_dict_file(path: Path) -> dict[str, Tensor]:
+        obj = torch.load(path.as_posix(), map_location=torch.device("cpu"), weights_only=True)
+        sd_obj = obj["state_dict"] if isinstance(obj, dict) and "state_dict" in obj else obj
+        if not isinstance(sd_obj, dict):
+            raise ValueError("state dict file did not contain a dict")
+        out: dict[str, Tensor] = {}
+        for k, v in sd_obj.items():
+            if isinstance(k, str) and torch.is_tensor(v):
+                out[k] = v
+            else:
+                raise ValueError("invalid state dict entry")
+        return out
+
+
+def _validate_state_dict(sd: dict[str, Tensor], arch: str, n_classes: int) -> None:
+    w = sd.get("fc.weight")
+    b = sd.get("fc.bias")
+    if w is None or b is None:
+        raise ValueError("missing classifier weights in state dict")
+    if w.ndim != 2 or b.ndim != 1:
+        raise ValueError("invalid classifier tensor dimensions")
+    if int(w.shape[0]) != n_classes or int(b.shape[0]) != n_classes:
+        raise ValueError("classifier head size does not match n_classes")
+    # ResNet-18 expected feature dimension
+    expected_in = 512
+    if int(w.shape[1]) != expected_in:
+        raise ValueError("classifier head in_features does not match backbone")
+    # Minimal backbone invariants for resnet18 CIFAR-style stem
+    conv1 = sd.get("conv1.weight")
+    if conv1 is None or conv1.ndim != 4:
+        raise ValueError("missing or invalid conv1.weight")
+    if int(conv1.shape[0]) != 64 or int(conv1.shape[1]) != 1:
+        raise ValueError("unexpected conv1 shape for 1-channel stem")
+    # Expect presence of top-level batch norm
+    if "bn1.weight" not in sd or "bn1.bias" not in sd:
+        raise ValueError("missing bn1 parameters")
+    # Ensure main layers exist
+    has_layers = all(any(k.startswith(f"layer{i}.") for k in sd) for i in range(1, 5))
+    if not has_layers:
+        raise ValueError("missing resnet layer blocks")

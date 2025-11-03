@@ -14,7 +14,7 @@ from PIL import Image, ImageFile, UnidentifiedImageError
 from ..config import Limits, Settings
 from ..errors import AppError, ErrorCode, new_error, status_for
 from ..inference.engine import InferenceEngine
-from ..logging import init_logging
+from ..logging import init_logging, log_event
 from ..middleware import RequestIdMiddleware, api_key_dependency
 from ..preprocess import PreprocessOptions, run_preprocess
 from ..request_context import request_id_var
@@ -86,6 +86,8 @@ def _register_models(app: FastAPI, engine: InferenceEngine) -> None:
             "version": man.version,
             "created_at": man.created_at.isoformat(),
             "schema_version": man.schema_version,
+            "val_acc": man.val_acc,
+            "temperature": man.temperature,
         }
 
     app.add_api_route("/v1/models/active", _model_active, methods=["GET"])
@@ -184,6 +186,18 @@ def _register_read(
         visual_b64: str | None = (
             base64.b64encode(pre.visual_png).decode("ascii") if pre.visual_png else None
         )
+        # Structured log for successful read
+        log_event(
+            "read_finished",
+            fields={
+                "latency_ms": dt_ms,
+                "digit": int(out.digit),
+                "confidence": float(out.confidence),
+                "model_id": out.model_id,
+                "uncertain": bool(uncertain),
+            },
+        )
+
         return {
             "digit": int(out.digit),
             "confidence": float(out.confidence),
@@ -212,7 +226,10 @@ def _register_read(
     )
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(
+    settings: Settings | None = None,
+    engine_provider: Callable[[], InferenceEngine] | None = None,
+) -> FastAPI:
     s = settings or Settings.load()
     init_logging()
     app = FastAPI(title="handwriting-ai", version=get_version().version)
@@ -235,9 +252,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def _provide_limits() -> Limits:
         return limits
 
+    # Expose providers for dependency overrides in tests
+    app.state.provide_engine = _provide_engine
+    app.state.provide_settings = _provide_settings
+    app.state.provide_limits = _provide_limits
+
     _register_basic(app, engine)
     _register_models(app, engine)
-    _register_read(app, _api_key_dep, _provide_engine, _provide_settings, _provide_limits)
+
+    # Allow explicit injection of a custom engine provider for tests
+    _eng_provider = engine_provider if engine_provider is not None else _provide_engine
+    _register_read(app, _api_key_dep, _eng_provider, _provide_settings, _provide_limits)
 
     return app
 
