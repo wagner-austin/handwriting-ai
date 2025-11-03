@@ -261,10 +261,12 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     import os
 
     log.info(f"cpu_cores={os.cpu_count()}")
-    log.info(f"intra_op_threads={torch.get_num_threads()}")
-    if hasattr(torch, "get_num_interop_threads"):
-        interop = torch.get_num_interop_threads()
-        log.info(f"inter_op_threads={interop}")
+    intra = torch.get_num_threads()
+    interop = torch.get_num_interop_threads() if hasattr(torch, "get_num_interop_threads") else None
+    if interop is not None:
+        log.info(f"threads_configured requested={cfg.threads} intra={intra} interop={interop}")
+    else:
+        log.info(f"threads_configured requested={cfg.threads} intra={intra}")
     log.info(f"device={device}")
 
     train_base, test_base = bases

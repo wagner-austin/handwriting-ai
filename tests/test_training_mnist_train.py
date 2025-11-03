@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 
 import torch
 from PIL import Image
 from torch import Tensor
+from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
+from handwriting_ai.training import mnist_train as mt
 from handwriting_ai.training.mnist_train import (
     TrainConfig,
     _apply_affine,
@@ -133,6 +136,28 @@ def test_train_with_scheduler_and_early_stop(tmp_path: Path) -> None:
     test_base = _TinyBase(2)
     out_dir = train_with_config(cfg, (train_base, test_base))
     assert (out_dir / "model.pt").exists()
+
+
+def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
+    # Patch _train_epoch to raise KeyboardInterrupt and ensure artifacts still write
+    cfg = _cfg(tmp_path)
+    cfg = replace(cfg, out_dir=tmp_path / "out_interrupt", epochs=2)
+    train_base = _TinyBase(4)
+    test_base = _TinyBase(2)
+
+    def _boom(
+        model: mt.TrainableModel,
+        train_loader: Iterable[tuple[Tensor, Tensor]],
+        device: torch.device,
+        optimizer: Optimizer,
+    ) -> float:
+        raise KeyboardInterrupt
+
+    mt._train_epoch = _boom  # patch
+    out_dir = train_with_config(cfg, (train_base, test_base))
+    # Even when interrupted, we should still write current/best weights and manifest
+    assert (out_dir / "model.pt").exists()
+    assert (out_dir / "manifest.json").exists()
 
 
 def test_ensure_image_guard_and_ok() -> None:
