@@ -13,6 +13,7 @@ from handwriting_ai.config import AppConfig, DigitsConfig, SecurityConfig, Setti
 from handwriting_ai.inference.engine import InferenceEngine
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.inference.types import PredictOutput
+from handwriting_ai.preprocess import preprocess_signature
 
 
 def _mk_png_bytes() -> bytes:
@@ -40,7 +41,7 @@ def test_predict_alias_matches_read() -> None:
                 n_classes=10,
                 version="1.0.0",
                 created_at=datetime.now(UTC),
-                preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+                preprocess_hash=preprocess_signature(),
                 val_acc=0.0,
                 temperature=1.0,
             )
@@ -75,7 +76,7 @@ def test_visualize_flag_affects_response() -> None:
                 n_classes=10,
                 version="1.0.0",
                 created_at=datetime.now(UTC),
-                preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+                preprocess_hash=preprocess_signature(),
                 val_acc=0.0,
                 temperature=1.0,
             )
@@ -115,7 +116,7 @@ def test_timeout_path_and_body() -> None:
                 n_classes=10,
                 version="1.0.0",
                 created_at=datetime.now(UTC),
-                preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+                preprocess_hash=preprocess_signature(),
                 val_acc=0.0,
                 temperature=1.0,
             )
