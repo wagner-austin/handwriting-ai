@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [ main, master, develop, dev, '**' ]
+    branches: [ main ]
   pull_request:
-    branches: [ '**' ]
+    branches: [ main ]
 
 permissions:
   contents: read
@@ -50,3 +50,24 @@ jobs:
           pip install yamllint
           yamllint -c .yamllint .
 
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Validate docker-compose config
+        run: docker compose config --quiet
+
+      - name: Build service image (compose)
+        run: docker compose build
+
+      - name: Build image (direct)
+        run: docker build -t handai:ci .
+
+      - name: Smoke test container entry (Python available)
+        run: |
+          docker run --rm --entrypoint /app/.venv/bin/python handai:ci -c "import sys; print(sys.version)"

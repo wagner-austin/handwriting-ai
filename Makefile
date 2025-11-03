@@ -40,6 +40,8 @@ guards:
 	@if rg -n "\btyping\.Any\b|\bAny\b" src tests; then echo "Found Any" && exit 1; else echo "No Any found"; fi
 	@if rg -n "typing\.cast\(" src tests; then echo "Found typing.cast" && exit 1; else echo "No cast found"; fi
 	@if rg -n "type:\s*ignore" src tests; then echo "Found type: ignore" && exit 1; else echo "No type: ignore found"; fi
+	@echo "Running logging/error guards (no print in src)..."
+	@if rg -n "\bprint\s*\(" src | grep -v "^$"; then echo "Found print() in src" && exit 1; else echo "No print() in src"; fi
 
 start:
 	docker compose up -d --build
