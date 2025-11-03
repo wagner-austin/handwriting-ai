@@ -41,7 +41,7 @@ yamllint = "^1.37.1"
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-src = ["src", "tests"]
+src = ["src", "tests", "scripts"]
 exclude = [".venv"]
 
 [tool.ruff.lint]
@@ -90,7 +90,7 @@ plugins = ["pydantic.mypy"]
  
 
 [tool.coverage.run]
-source = ["src"]
+source = ["src", "scripts"]
 omit = ["tests/*"]
 
 [tool.coverage.report]
@@ -113,3 +113,4 @@ disallow_any_decorated = false
 disallow_any_explicit = false
 check_untyped_defs = false
 warn_return_any = false
+
