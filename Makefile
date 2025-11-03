@@ -32,7 +32,7 @@ lint: install-dev
 	poetry run ruff check . --fix
 	poetry run ruff format .
 	poetry run mypy
- 	poetry run python scripts/guard_checks.py
+	poetry run python scripts/guard_checks.py
 
 check: lint | test
 
