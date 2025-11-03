@@ -1,13 +1,18 @@
 from __future__ import annotations
 
 import re
-import sys
+from collections.abc import Iterable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
-
 
 SRC_DIRS: tuple[str, ...] = ("src", "tests")
+IGNORED_PARTS: set[str] = {
+    ".venv",
+    "__pycache__",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".pytest_cache",
+}
 
 
 @dataclass(frozen=True)
@@ -24,7 +29,7 @@ def _iter_text_files(paths: Iterable[Path]) -> Iterable[Path]:
             continue
         for p in root.rglob("*.py"):
             # Skip virtual envs or caches if ever in tree
-            if any(part in {".venv", "__pycache__", ".mypy_cache", ".ruff_cache", ".pytest_cache"} for part in p.parts):
+            if any(part in IGNORED_PARTS for part in p.parts):
                 continue
             yield p
 
@@ -34,11 +39,11 @@ def _scan() -> list[Violation]:
     files = list(_iter_text_files(roots))
 
     # Patterns
-    pat_any = re.compile(r"\btyping\.Any\b|\bAny\b")
-    pat_cast = re.compile(r"typing\.cast\s*\(")
+    pat_any = re.compile(r'\btyping\.Any\b|\bAny\b')
+    pat_cast = re.compile(r'typing\.cast\s*\(')
     # accept both '# type: ignore' and '# type: ignore[code]'
-    pat_ignore = re.compile(r"#\s*type:\s*ignore(\[[^\]]+\])?")
-    pat_print = re.compile(r"\bprint\s*\(")
+    pat_ignore = re.compile(r'#\s*type:\s*ignore(\[[^\]]+\])?')
+    pat_print = re.compile(r'\bprint\s*\(')
 
     violations: list[Violation] = []
     for f in files:
@@ -74,4 +79,3 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
-
