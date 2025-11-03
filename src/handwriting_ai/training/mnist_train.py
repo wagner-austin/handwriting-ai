@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -209,31 +210,43 @@ def _train_epoch(
     device: torch.device,
     optimizer: Optimizer,
 ) -> float:
+    import time as _time
+
     log = get_logger()
     model.train()
     total = 0
     loss_sum = 0.0
+    log_every = 10
     for batch_idx, (x, y) in enumerate(train_loader):
-        if batch_idx % 50 == 0:
-            log.info(f"train_loading_batch_{batch_idx}")
+        t0 = _time.perf_counter()
+        if batch_idx % log_every == 0:
+            log.info(f"train_loading_batch idx={batch_idx}")
         x = x.to(device)
         y = y.to(device)
-        if batch_idx % 50 == 0:
+        if batch_idx % log_every == 0:
             log.info("train_forward")
         optimizer.zero_grad(set_to_none=True)
         logits = model(x)
         loss = F.cross_entropy(logits, y)
-        if batch_idx % 50 == 0:
+        if batch_idx % log_every == 0:
             log.info("train_backward")
         torch.autograd.backward((loss,))
-        if batch_idx % 50 == 0:
+        if batch_idx % log_every == 0:
             log.info("train_step")
         optimizer.step()
         total += y.size(0)
         loss_sum += float(loss.item()) * y.size(0)
-        if batch_idx % 50 == 0:
+        if batch_idx % log_every == 0:
             avg_loss = loss_sum / total if total > 0 else 0.0
-            log.info(f"train_batch_done_{batch_idx}_{avg_loss:.4f}")
+            with torch.no_grad():
+                preds = logits.argmax(dim=1)
+                batch_acc = float((preds == y).float().mean().item())
+            dt = _time.perf_counter() - t0
+            ips = (int(y.size(0)) / dt) if dt > 0 else 0.0
+            log.info(
+                f"train_batch_done idx={batch_idx} batch_loss={float(loss.item()):.4f} "
+                f"batch_acc={batch_acc:.4f} avg_loss={avg_loss:.4f} ips={ips:.1f}"
+            )
     return loss_sum / total if total > 0 else 0.0
 
 
@@ -263,23 +276,33 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     best_val = -1.0
     best_sd: dict[str, Tensor] | None = None
     epochs_no_improve = 0
-    for ep in range(1, cfg.epochs + 1):
-        log.info(f"epoch_start_{ep}_{cfg.epochs}")
-        train_loss = _train_epoch(model, train_loader, device, optimizer)
-        val_acc = _evaluate(model, test_loader, device)
-        log.info(f"epoch_done train_loss={train_loss:.4f} val_acc={val_acc:.4f}")
-        if val_acc > best_val + float(cfg.min_delta):
-            best_val = float(val_acc)
-            best_sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
-            epochs_no_improve = 0
-            log.info(f"new_best_val_acc={best_val:.4f}")
-        else:
-            epochs_no_improve += 1
-        if scheduler is not None:
-            scheduler.step()
-        if cfg.patience > 0 and epochs_no_improve >= int(cfg.patience):
-            log.info(f"early_stop_at_epoch={ep} no_improve={epochs_no_improve}")
-            break
+    try:
+        import time as _time
+
+        for ep in range(1, cfg.epochs + 1):
+            t0 = _time.perf_counter()
+            log.info(f"epoch_start_{ep}_{cfg.epochs}")
+            train_loss = _train_epoch(model, train_loader, device, optimizer)
+            val_acc = _evaluate(model, test_loader, device)
+            dt = _time.perf_counter() - t0
+            log.info(
+                f"epoch_done idx={ep} train_loss={train_loss:.4f} "
+                f"val_acc={val_acc:.4f} time_s={dt:.1f}"
+            )
+            if val_acc > best_val + float(cfg.min_delta):
+                best_val = float(val_acc)
+                best_sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
+                epochs_no_improve = 0
+                log.info(f"new_best_val_acc={best_val:.4f}")
+            else:
+                epochs_no_improve += 1
+            if scheduler is not None:
+                scheduler.step()
+            if cfg.patience > 0 and epochs_no_improve >= int(cfg.patience):
+                log.info(f"early_stop_at_epoch={ep} no_improve={epochs_no_improve}")
+                break
+    except KeyboardInterrupt:
+        logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
 
     # Write artifact
     model_dir = cfg.out_dir / cfg.model_id
