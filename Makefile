@@ -1,5 +1,8 @@
 .PHONY: help install install-dev lock serve test lint check start stop clean
 
+# Port configuration: use APP__PORT if set, otherwise default to 8081
+PORT := $(if $(APP__PORT),$(APP__PORT),8081)
+
 help:
 	@echo "Targets:"
 	@echo "  make install     - Install dependencies with Poetry"
@@ -22,8 +25,8 @@ install-dev:
 	poetry install --with dev
 
 serve: install-dev
-	# Note: this expects an app module when implemented.
-	poetry run uvicorn handwriting_ai.api.app:app --host 0.0.0.0 --port $${APP__PORT:-8081}
+# Run API locally with uvicorn (expects handwriting_ai.api.app:app)
+	poetry run uvicorn handwriting_ai.api.app:app --host 0.0.0.0 --port $(PORT)
 
 test: install-dev
 	poetry run pytest --cov=src --cov-report=term-missing
