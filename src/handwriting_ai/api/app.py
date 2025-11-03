@@ -93,6 +93,15 @@ def _register_models(app: FastAPI, engine: InferenceEngine) -> None:
     app.add_api_route("/v1/models/active", _model_active, methods=["GET"])
 
 
+def _raise_if_too_large(raw: bytes, limits: Limits) -> None:
+    if len(raw) > limits.max_bytes:
+        raise AppError(
+            ErrorCode.too_large,
+            status_for(ErrorCode.too_large),
+            "File exceeds size limit",
+        )
+
+
 def _register_read(
     app: FastAPI,
     dep_api_key: Callable[[str | None], None],
@@ -127,12 +136,7 @@ def _register_read(
             )
 
         raw = await file.read()
-        if len(raw) > limits.max_bytes:
-            raise AppError(
-                ErrorCode.too_large,
-                status_for(ErrorCode.too_large),
-                "File exceeds size limit",
-            )
+        _raise_if_too_large(raw, limits)
 
         try:
             img = Image.open(io.BytesIO(raw))
