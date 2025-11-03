@@ -17,13 +17,13 @@ def test_app_port_out_of_range_raises() -> None:
         _ = _load_with_env(env)
 
 
-def test_digits_conf_threshold_toml_mapping() -> None:
+def test_digits_uncertain_threshold_toml() -> None:
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "cfg.toml"
         p.write_text(
             """
 [digits]
-conf_threshold = 0.42
+uncertain_threshold = 0.42
 """.strip(),
             encoding="utf-8",
         )

@@ -67,12 +67,8 @@ class Settings:
         except Exception as exc:
             raise RuntimeError(f"Invalid TOML config: {cfg_path}") from exc
         app_in: dict[str, object] = _toml_table(raw, "app")
-        digits_in_raw: dict[str, object] = _toml_table(raw, "digits")
+        digits_in: dict[str, object] = _toml_table(raw, "digits")
         security_in: dict[str, object] = _toml_table(raw, "security")
-        digits_in = {
-            ("uncertain_threshold" if k == "conf_threshold" else k): v
-            for k, v in digits_in_raw.items()
-        }
         return cls(
             app=_merge_app(base.app, app_in),
             digits=_merge_digits(base.digits, digits_in),
