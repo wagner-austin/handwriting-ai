@@ -31,6 +31,7 @@ mypy = "^1.11.2"
 ruff = "^0.6.5"
 black = "^24.10.0"
 httpx = "^0.27.2"
+yamllint = "^1.37.1"
 
 [tool.ruff]
 line-length = 100
