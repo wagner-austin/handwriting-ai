@@ -69,7 +69,7 @@ def test_read_positive_with_engine_override(capsys: CaptureFixture[str]) -> None
                 n_classes=10,
                 version="1.0.0",
                 created_at=datetime.now(UTC),
-                preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+                preprocess_hash=preprocess_signature(),
                 val_acc=0.0,
                 temperature=1.0,
             )
