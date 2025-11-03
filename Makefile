@@ -12,6 +12,7 @@ help:
 	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
 	@echo "  make train       - Train MNIST model (PowerShell-friendly)"
+	@echo "  make train-long  - Long run (uses config/trainer.toml)"
 	@echo "  make seed-model  - Copy trained model from artifacts/ to seed/ for Docker image seeding"
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
@@ -52,6 +53,19 @@ BATCH_SIZE ?= 128
 LR ?= 0.001
 SEED ?= 42
 DEVICE ?= cpu
+# New training knobs (optional)
+OPTIM ?= adamw
+SCHED ?= cosine
+WD ?= 0.01
+STEP_SIZE ?= 10
+GAMMA ?= 0.5
+MIN_LR ?= 1e-5
+PATIENCE ?= 0
+MIN_DELTA ?= 0.0005
+THREADS ?= 0
+AUGMENT ?= 0
+AUG_ROTATE ?= 10
+AUG_TRANSLATE ?= 0.1
 
 # Train a service-compatible MNIST model (PowerShell-friendly)
 train: install-dev
@@ -62,8 +76,23 @@ train: install-dev
 		--epochs $(EPOCHS) \
 		--batch-size $(BATCH_SIZE) \
 		--lr $(LR) \
+		--weight-decay $(WD) \
 		--seed $(SEED) \
-		--device $(DEVICE)
+		--device $(DEVICE) \
+		--optim "$(OPTIM)" \
+		--scheduler "$(SCHED)" \
+		--step-size $(STEP_SIZE) \
+		--gamma $(GAMMA) \
+		--min-lr $(MIN_LR) \
+		--patience $(PATIENCE) \
+		--min-delta $(MIN_DELTA) \
+		--threads $(THREADS) \
+		$(if $(filter $(AUGMENT),1 true yes),--augment,) \
+		--aug-rotate $(AUG_ROTATE) \
+		--aug-translate $(AUG_TRANSLATE)
+
+train-long: install-dev
+	poetry run python scripts/train_mnist_resnet18.py --config ./config/trainer.toml
 
 # Copy a trained artifact from artifacts/ to seed/ so Dockerfile can bake it into /seed.
 # Usage (PowerShell): make seed-model MODEL_ID=mnist_resnet18_v1
