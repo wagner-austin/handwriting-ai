@@ -57,6 +57,16 @@ def test_softmax_output_shape_and_sum() -> None:
         def load_state_dict(self, sd: dict[str, Tensor]) -> object:
             return self
 
+        # Satisfy TorchModel protocol
+        def train(self) -> object:
+            return self
+
+        def state_dict(self) -> dict[str, Tensor]:
+            return {}
+
+        def parameters(self) -> list[torch.nn.Parameter]:
+            return []
+
     s = Settings(app=AppConfig(), digits=DigitsConfig(), security=SecurityConfig())
     eng = InferenceEngine(s)
     eng._manifest = ModelManifest(
@@ -90,6 +100,16 @@ def test_tta_changes_score_for_asymmetric_model() -> None:
 
         def load_state_dict(self, sd: dict[str, Tensor]) -> object:
             return self
+
+        # Satisfy TorchModel protocol
+        def train(self) -> object:
+            return self
+
+        def state_dict(self) -> dict[str, Tensor]:
+            return {}
+
+        def parameters(self) -> list[torch.nn.Parameter]:
+            return []
 
     s0 = Settings(app=AppConfig(), digits=DigitsConfig(tta=False), security=SecurityConfig())
     s1 = Settings(app=AppConfig(), digits=DigitsConfig(tta=True), security=SecurityConfig())
