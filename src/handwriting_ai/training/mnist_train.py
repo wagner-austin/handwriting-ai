@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import secrets
+import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -319,11 +321,16 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     except KeyboardInterrupt:
         logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
 
-    # Write artifact
+    # Write artifact (unique run files + stable copies)
     model_dir = cfg.out_dir / cfg.model_id
     model_dir.mkdir(parents=True, exist_ok=True)
     sd = best_sd if best_sd is not None else model.state_dict()
-    torch.save(sd, (model_dir / "model.pt").as_posix())
+    run_ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
+    run_rand = secrets.token_hex(3)
+    run_id = f"{run_ts}-{run_rand}"
+    model_unique = model_dir / f"model-{run_id}.pt"
+    manifest_unique = model_dir / f"manifest-{run_id}.json"
+    torch.save(sd, model_unique.as_posix())
     manifest = {
         "schema_version": "v1",
         "model_id": cfg.model_id,
@@ -334,7 +341,20 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
         "preprocess_hash": preprocess_signature(),
         "val_acc": float(best_val if best_val >= 0 else _evaluate(model, test_loader, device)),
         "temperature": 1.0,
+        # Run metadata (ignored by loader but helpful for provenance)
+        "run_id": run_id,
+        "epochs": int(cfg.epochs),
+        "batch_size": int(cfg.batch_size),
+        "lr": float(cfg.lr),
+        "seed": int(cfg.seed),
+        "device": str(cfg.device),
+        "optim": str(cfg.optim),
+        "scheduler": str(cfg.scheduler),
+        "augment": bool(cfg.augment),
     }
-    (model_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    log.info(f"artifact_written_to={model_dir}")
+    manifest_unique.write_text(json.dumps(manifest), encoding="utf-8")
+    # Promote to stable filenames for compatibility
+    shutil.copy2(model_unique, model_dir / "model.pt")
+    shutil.copy2(manifest_unique, model_dir / "manifest.json")
+    log.info(f"artifact_written_to={model_dir} run_id={run_id}")
     return model_dir

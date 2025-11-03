@@ -4,8 +4,8 @@ data_root = "./data/mnist"
 out_dir = "./artifacts/digits/models"
 model_id = "mnist_resnet18_v1"
 
-# ~6 hours target: calibrate with 1 epoch, then set epochs accordingly
-epochs = 120
+# ~6 hours target (based on ~424s/epoch => ~50 epochs)
+epochs = 50
 batch_size = 512
 lr = 0.0015
 weight_decay = 0.01

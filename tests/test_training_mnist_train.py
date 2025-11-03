@@ -194,6 +194,39 @@ def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
     assert (out_dir / "manifest.json").exists()
 
 
+def test_train_threads_log_branch_no_interop(tmp_path: Path) -> None:
+    # Exercise branch where torch has no get_num_interop_threads
+    cfg = _cfg(tmp_path)
+    cfg = replace(cfg, out_dir=tmp_path / "out_threads", epochs=1)
+    train_base = _TinyBase(2)
+    test_base = _TinyBase(2)
+
+    from collections.abc import Callable
+
+    import torch as _torch
+
+    had_attr = False
+    saved: Callable[[], int] | None = None
+    try:
+        saved = _torch.get_num_interop_threads
+        had_attr = True
+    except AttributeError:
+        # Not available in this build; log to satisfy guard
+        import logging as _logging
+
+        _logging.getLogger("handwriting_ai").info("get_num_interop_threads_absent")
+        saved = None
+        had_attr = False
+    if had_attr:
+        delattr(_torch, "get_num_interop_threads")
+    try:
+        out_dir = train_with_config(cfg, (train_base, test_base))
+        assert (out_dir / "model.pt").exists()
+    finally:
+        if had_attr and saved is not None:
+            _torch.get_num_interop_threads = saved
+
+
 def test_ensure_image_guard_and_ok() -> None:
     ok_img = Image.new("L", (8, 8), 0)
     img = _ensure_image(ok_img)

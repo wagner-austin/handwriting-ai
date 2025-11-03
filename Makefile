@@ -11,8 +11,8 @@ help:
 	@echo "  make test        - Run pytest with coverage"
 	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
-	@echo "  make train       - Train MNIST model (PowerShell-friendly)"
-	@echo "  make train-long  - Long run (uses config/trainer.toml)"
+	@echo "  make train       - Train MNIST model (pretty color logs)"
+	@echo "  make train-long  - Long run (JSON logs; uses config/trainer.toml)"
 	@echo "  make seed-model  - Copy trained model from artifacts/ to seed/ for Docker image seeding"
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
@@ -89,10 +89,11 @@ train: install-dev
 		--threads $(THREADS) \
 		$(if $(filter $(AUGMENT),1 true yes),--augment,) \
 		--aug-rotate $(AUG_ROTATE) \
-		--aug-translate $(AUG_TRANSLATE)
+		--aug-translate $(AUG_TRANSLATE) \
+		--log-style pretty
 
 train-long: install-dev
-	poetry run python scripts/train_mnist_resnet18.py --config ./config/trainer.toml
+	poetry run python scripts/train_mnist_resnet18.py --config ./config/trainer.toml --log-style pretty
 
 # Copy a trained artifact from artifacts/ to seed/ so Dockerfile can bake it into /seed.
 # Usage (PowerShell): make seed-model MODEL_ID=mnist_resnet18_v1

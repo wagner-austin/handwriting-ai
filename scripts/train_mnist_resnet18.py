@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import tomllib
 from pathlib import Path
-from typing import Final
+from typing import Final, Literal
 
 from torchvision import datasets
 
@@ -114,7 +114,10 @@ def _read_defaults(path: Path | None) -> TrainConfig:
     return _apply_overrides(cfg, t if isinstance(t, dict) else {})
 
 
-def _parse_args() -> TrainConfig:
+LogStyle = Literal["json", "pretty", "auto"]
+
+
+def _parse_args() -> tuple[TrainConfig, LogStyle]:
     # Stage 1: read --config to use as defaults
     ap0 = argparse.ArgumentParser(add_help=False)
     ap0.add_argument("--config", type=str, default="./config/trainer.toml")
@@ -145,8 +148,15 @@ def _parse_args() -> TrainConfig:
     ap.add_argument("--augment", action="store_true", default=defaults.augment)
     ap.add_argument("--aug-rotate", type=float, default=defaults.aug_rotate)
     ap.add_argument("--aug-translate", type=float, default=defaults.aug_translate)
+    ap.add_argument(
+        "--log-style",
+        type=str,
+        choices=["json", "pretty", "auto"],
+        default="auto",
+        help="Logging style: json, pretty, or auto",
+    )
     args = ap.parse_args()
-    return TrainConfig(
+    cfg = TrainConfig(
         data_root=Path(str(args.data_root)),
         out_dir=Path(str(args.out_dir)),
         model_id=str(args.model_id),
@@ -168,12 +178,22 @@ def _parse_args() -> TrainConfig:
         aug_rotate=float(args.aug_rotate),
         aug_translate=float(args.aug_translate),
     )
+    log_style: LogStyle = "auto"
+    if isinstance(args.log_style, str) and args.log_style in {"json", "pretty", "auto"}:
+        # mypy can narrow to Literal set through simple control flow
+        if args.log_style == "json":
+            log_style = "json"
+        elif args.log_style == "pretty":
+            log_style = "pretty"
+        else:
+            log_style = "auto"
+    return cfg, log_style
 
 
 def main() -> None:
-    init_logging()
+    cfg, log_style = _parse_args()
+    init_logging(style=log_style)
     log = get_logger()
-    cfg = _parse_args()
     log.info(
         f"trainer_cli_start data_root={cfg.data_root} out_dir={cfg.out_dir} model_id={cfg.model_id}"
     )
