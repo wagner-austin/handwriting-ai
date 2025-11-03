@@ -30,6 +30,7 @@ htmlcov/
 artifacts/
 logs/
 corpus/
+data/
 
 # OS / editor junk
 .DS_Store
