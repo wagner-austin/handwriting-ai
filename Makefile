@@ -1,4 +1,4 @@
-.PHONY: help install install-dev lock serve test lint check start stop clean
+.PHONY: help install install-dev lock serve test lint check start stop clean train
 
 # Port configuration: use APP__PORT if set, otherwise default to 8081
 PORT := $(if $(APP__PORT),$(APP__PORT),8081)
@@ -11,6 +11,7 @@ help:
 	@echo "  make test        - Run pytest with coverage"
 	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
+	@echo "  make train       - Train MNIST model (PowerShell-friendly)"
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
 	@echo "  make clean       - Prune and rebuild compose stack"
@@ -39,6 +40,29 @@ lint: install-dev
 	poetry run yamllint -c .yamllint .
 
 check: lint | test
+
+
+# Training configuration (override via: make train VAR=value)
+MODEL_ID ?= mnist_resnet18_v1
+DATA_ROOT ?= ./data/mnist
+OUT_DIR ?= ./artifacts/digits/models
+EPOCHS ?= 4
+BATCH_SIZE ?= 128
+LR ?= 0.001
+SEED ?= 42
+DEVICE ?= cpu
+
+# Train a service-compatible MNIST model (PowerShell-friendly)
+train: install-dev
+	poetry run python scripts/train_mnist_resnet18.py \
+		--data-root "$(DATA_ROOT)" \
+		--out-dir "$(OUT_DIR)" \
+		--model-id "$(MODEL_ID)" \
+		--epochs $(EPOCHS) \
+		--batch-size $(BATCH_SIZE) \
+		--lr $(LR) \
+		--seed $(SEED) \
+		--device $(DEVICE)
 
 
 start:
