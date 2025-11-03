@@ -12,6 +12,7 @@ from handwriting_ai.config import AppConfig, DigitsConfig, SecurityConfig, Setti
 from handwriting_ai.inference.engine import InferenceEngine
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.inference.types import PredictOutput
+from handwriting_ai.preprocess import preprocess_signature
 
 
 class _T(InferenceEngine):
@@ -46,7 +47,7 @@ def test_models_active_ready_path_returns_fields() -> None:
         n_classes=10,
         version="1.0.0",
         created_at=datetime.now(UTC),
-        preprocess_hash="v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm",
+        preprocess_hash=preprocess_signature(),
         val_acc=0.75,
         temperature=1.0,
     )
