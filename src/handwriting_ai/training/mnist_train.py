@@ -24,7 +24,7 @@ from handwriting_ai.inference.engine import (
 from handwriting_ai.inference.engine import (
     _build_model as _engine_build_model,
 )
-from handwriting_ai.logging import get_logger
+from handwriting_ai.logging import get_logger, init_logging
 from handwriting_ai.preprocess import PreprocessOptions, preprocess_signature, run_preprocess
 
 
@@ -238,6 +238,8 @@ def _train_epoch(
 
 
 def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> Path:
+    # Ensure logger is initialized for scripts/CLI contexts
+    init_logging()
     log = get_logger()
     _set_seed(cfg.seed)
     device = torch.device(cfg.device)

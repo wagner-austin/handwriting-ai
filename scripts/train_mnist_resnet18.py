@@ -7,6 +7,7 @@ from typing import Final
 
 from torchvision import datasets
 
+from handwriting_ai.logging import get_logger, init_logging
 from handwriting_ai.training import TrainConfig, train_with_config
 
 MNIST_N_CLASSES: Final[int] = 10
@@ -170,9 +171,19 @@ def _parse_args() -> TrainConfig:
 
 
 def main() -> None:
+    init_logging()
+    log = get_logger()
     cfg = _parse_args()
+    log.info(
+        f"trainer_cli_start data_root={cfg.data_root} out_dir={cfg.out_dir} model_id={cfg.model_id}"
+    )
+    log.info("loading_mnist_train")
     train_base = datasets.MNIST(cfg.data_root.as_posix(), train=True, download=True)
+    log.info("loading_mnist_test")
     test_base = datasets.MNIST(cfg.data_root.as_posix(), train=False, download=True)
+    log.info(
+        f"mnist_loaded train={len(train_base)} test={len(test_base)} batch_size={cfg.batch_size}"
+    )
     train_with_config(cfg, (train_base, test_base))
 
 

@@ -48,9 +48,9 @@ check: lint | test
 MODEL_ID ?= mnist_resnet18_v1
 DATA_ROOT ?= ./data/mnist
 OUT_DIR ?= ./artifacts/digits/models
-EPOCHS ?= 4
-BATCH_SIZE ?= 128
-LR ?= 0.001
+EPOCHS ?= 1
+BATCH_SIZE ?= 512
+LR ?= 0.0015
 SEED ?= 42
 DEVICE ?= cpu
 # New training knobs (optional)
@@ -62,9 +62,9 @@ GAMMA ?= 0.5
 MIN_LR ?= 1e-5
 PATIENCE ?= 0
 MIN_DELTA ?= 0.0005
-THREADS ?= 0
-AUGMENT ?= 0
-AUG_ROTATE ?= 10
+THREADS ?= 16
+AUGMENT ?= 1
+AUG_ROTATE ?= 12
 AUG_TRANSLATE ?= 0.1
 
 # Train a service-compatible MNIST model (PowerShell-friendly)
