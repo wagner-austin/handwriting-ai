@@ -2,7 +2,9 @@
   "permissions": {
     "allow": [
       "Bash(make check:*)",
-      "Bash(poetry show:*)"
+      "Bash(poetry show:*)",
+      "Bash(docker logs:*)",
+      "Bash(curl:*)"
     ],
     "deny": [],
     "ask": []
