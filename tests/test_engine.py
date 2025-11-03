@@ -35,6 +35,16 @@ def test_engine_tta_batching() -> None:
         def load_state_dict(self, sd: dict[str, torch.Tensor]) -> object:
             return self
 
+        # Satisfy TorchModel protocol
+        def train(self) -> object:
+            return self
+
+        def state_dict(self) -> dict[str, torch.Tensor]:
+            return {}
+
+        def parameters(self) -> list[torch.nn.Parameter]:
+            return []
+
     def _mk_engine(tta: bool) -> InferenceEngine:
         s = Settings(app=AppConfig(), digits=DigitsConfig(tta=tta), security=SecurityConfig())
         eng = InferenceEngine(s)
