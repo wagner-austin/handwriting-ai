@@ -184,3 +184,13 @@ def test_malformed_multipart_422() -> None:
     # Missing required 'file' field -> 422
     r = client.post("/v1/read", files={"wrong": ("img.png", b"x", "image/png")})
     assert r.status_code == 422
+
+
+def test_models_active_default_not_loaded() -> None:
+    # No engine provider and default settings: engine.try_load_active() finds no artifacts
+    app = create_app()
+    client = TestClient(app)
+    r = client.get("/v1/models/active")
+    assert r.status_code == 200
+    body = r.text
+    assert '"model_loaded":false' in body and '"model_id":null' in body
