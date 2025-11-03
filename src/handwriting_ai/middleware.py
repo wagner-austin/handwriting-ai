@@ -3,13 +3,13 @@ from __future__ import annotations
 import uuid
 from collections.abc import Callable
 
-from fastapi import Header, HTTPException
+from fastapi import Header
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response
 
 from .config import Settings
-from .errors import ErrorCode, new_error
+from .errors import AppError, ErrorCode, status_for
 from .request_context import request_id_var
 
 
@@ -37,11 +37,11 @@ def api_key_dependency(settings: Settings) -> Callable[[str | None], None]:
         return _pass
 
     def _check(x_api_key: str | None = Header(default=None, convert_underscores=True)) -> None:
-        rid = request_id_var.get()
         if x_api_key is None or x_api_key != required_key:
-            # 401 with standardized body
-            body = new_error(ErrorCode.internal_error, rid, message="Unauthorized")
-            # Using HTTPException to short-circuit request in FastAPI
-            raise HTTPException(status_code=401, detail=body.to_dict())
+            raise AppError(
+                ErrorCode.unauthorized,
+                status_for(ErrorCode.unauthorized),
+                "Unauthorized",
+            )
 
     return _check

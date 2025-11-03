@@ -15,6 +15,7 @@ class ErrorCode(str, Enum):
     preprocessing_failed = "preprocessing_failed"
     timeout = "timeout"
     internal_error = "internal_error"
+    unauthorized = "unauthorized"
 
 
 _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
@@ -25,6 +26,7 @@ _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
     ErrorCode.preprocessing_failed: "Image preprocessing failed.",
     ErrorCode.timeout: "Request timed out.",
     ErrorCode.internal_error: "Internal server error.",
+    ErrorCode.unauthorized: "Unauthorized.",
 }
 
 
@@ -69,4 +71,6 @@ def status_for(code: ErrorCode) -> int:
     if code is ErrorCode.timeout:
         # Use 500 if internal timeout boundary triggered; endpoint may map differently.
         return status.HTTP_504_GATEWAY_TIMEOUT
+    if code is ErrorCode.unauthorized:
+        return status.HTTP_401_UNAUTHORIZED
     return status.HTTP_500_INTERNAL_SERVER_ERROR

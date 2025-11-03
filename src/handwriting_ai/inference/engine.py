@@ -38,6 +38,9 @@ class InferenceEngine:
         self._model_lock = threading.RLock()
         self._model: TorchModel | None = None
         self._manifest: ModelManifest | None = None
+        self._artifacts_dir: Path | None = None
+        self._last_manifest_mtime: float | None = None
+        self._last_model_mtime: float | None = None
         torch.set_num_threads(1)
 
     @property
@@ -117,6 +120,41 @@ class InferenceEngine:
         with self._model_lock:
             self._model = model
             self._manifest = manifest
+            self._artifacts_dir = model_dir
+            try:
+                self._last_manifest_mtime = manifest_path.stat().st_mtime
+                self._last_model_mtime = model_path.stat().st_mtime
+            except OSError:
+                # If mtimes cannot be read, hot-reload will be disabled.
+                self._logger.info("artifact_mtime_unavailable")
+                self._last_manifest_mtime = None
+                self._last_model_mtime = None
+
+    def reload_if_changed(self) -> bool:
+        """Reload active model if manifest or weights changed on disk.
+
+        Returns True if a reload occurred and engine remains ready; False otherwise.
+        """
+        art = self._artifacts_dir
+        if art is None:
+            return False
+        manifest_path = (art / "manifest.json") if art else None
+        model_path = (art / "model.pt") if art else None
+        if manifest_path is None or model_path is None:
+            return False
+        try:
+            m1 = manifest_path.stat().st_mtime
+            m2 = model_path.stat().st_mtime
+        except OSError:
+            self._logger.info("artifact_mtime_unavailable")
+            return False
+        if self._last_manifest_mtime is None or self._last_model_mtime is None:
+            return False
+        if m1 <= self._last_manifest_mtime and m2 <= self._last_model_mtime:
+            return False
+        # Attempt reload via normal path
+        self.try_load_active()
+        return self.ready
 
 
 def _make_pool(settings: Settings) -> ThreadPoolExecutor:

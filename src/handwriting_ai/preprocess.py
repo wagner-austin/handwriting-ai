@@ -14,6 +14,7 @@ from .inference.types import PreprocessOutput
 _MNIST_MEAN: Final[float] = 0.1307
 _MNIST_STD: Final[float] = 0.3081
 _PREPROCESS_SIGNATURE: Final[str] = "v1/grayscale+otsu+lcc+deskew+center+resize28+mnistnorm"
+_ANGLE_CONF_MIN: Final[float] = 0.02
 
 
 @dataclass(frozen=True)
@@ -181,8 +182,13 @@ def _component_bbox_bytes(
 
 def _deskew_if_needed(img: Image.Image) -> Image.Image:
     width, height = img.size
-    angle_deg = _principal_angle(img, width, height)
-    if angle_deg is None or abs(angle_deg) < 1.0:
+    ac = _principal_angle_confidence(img, width, height)
+    if ac is None:
+        return img
+    angle_deg, conf = ac
+    if abs(angle_deg) < 1.0:
+        return img
+    if conf < _ANGLE_CONF_MIN:
         return img
     if angle_deg > 10.0:
         angle_deg = 10.0
@@ -218,6 +224,44 @@ def _principal_angle(img: Image.Image, width: int, height: int) -> float | None:
         return None
     angle_rad = 0.5 * math.atan2(2.0 * cov_xy, (var_x - var_y))
     return math.degrees(angle_rad)
+
+
+def _principal_angle_confidence(
+    img: Image.Image, width: int, height: int
+) -> tuple[float, float] | None:
+    pix = img.load()
+    if pix is None:
+        return None
+    xs: list[int] = []
+    ys: list[int] = []
+    for y in range(height):
+        for x in range(width):
+            if pix[x, y] != 255:
+                xs.append(x)
+                ys.append(y)
+    n = len(xs)
+    if n == 0:
+        return None
+    mean_x = sum(xs) / n
+    mean_y = sum(ys) / n
+    var_x = sum((x - mean_x) * (x - mean_x) for x in xs) / n
+    var_y = sum((y - mean_y) * (y - mean_y) for y in ys) / n
+    cov_xy = sum((xs[i] - mean_x) * (ys[i] - mean_y) for i in range(n)) / n
+    if var_x + var_y == 0.0:
+        return None
+    angle_rad = 0.5 * math.atan2(2.0 * cov_xy, (var_x - var_y))
+    # Eigenvalue-based anisotropy (confidence) for 2x2 covariance
+    a = var_x
+    d = var_y
+    b = cov_xy
+    trace = a + d
+    delta = ((a - d) * (a - d)) * 0.25 + b * b
+    root = math.sqrt(delta)
+    lam_max = 0.5 * trace + root
+    lam_min = 0.5 * trace - root
+    denom = lam_max + lam_min if (lam_max + lam_min) > 0.0 else 1.0
+    conf = (lam_max - lam_min) / denom
+    return (math.degrees(angle_rad), conf)
 
 
 def _center_on_square(img: Image.Image) -> Image.Image:

@@ -162,7 +162,7 @@ def test_api_key_enforcement_integration() -> None:
     client = TestClient(app)
     files = {"file": ("img.png", _mk_png_bytes(), "image/png")}
     r1 = client.post("/v1/read", files=files)
-    assert r1.status_code == 401 and "Unauthorized" in r1.text
+    assert r1.status_code == 401 and '"code":"unauthorized"' in r1.text
     r2 = client.post("/v1/read", files=files, headers={"X-Api-Key": key})
     assert r2.status_code == 200
 

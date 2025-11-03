@@ -12,6 +12,7 @@ from handwriting_ai.preprocess import (
     _estimate_background_is_dark,
     _largest_component_crop,
     _principal_angle,
+    _principal_angle_confidence,
     run_preprocess,
 )
 
@@ -110,10 +111,21 @@ def test_principal_angle_none_when_pix_none(monkeypatch: pytest.MonkeyPatch) -> 
     assert _principal_angle(img, 3, 3) is None
 
 
+def test_principal_angle_confidence_none_when_pix_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    img = _mk_white((3, 3))
+
+    def _load_none(self: Image.Image) -> None:
+        return None
+
+    monkeypatch.setattr(Image.Image, "load", _load_none, raising=True)
+    assert _principal_angle_confidence(img, 3, 3) is None
+
+
 def test_principal_angle_none_when_zero_variance() -> None:
     img = _mk_white((4, 4))
     img.putpixel((2, 2), 0)
     assert _principal_angle(img, 4, 4) is None
+    assert _principal_angle_confidence(img, 4, 4) is None
 
 
 def test_center_on_square_pix_none_returns_input(monkeypatch: pytest.MonkeyPatch) -> None:
