@@ -16,6 +16,7 @@ class ErrorCode(str, Enum):
     timeout = "timeout"
     internal_error = "internal_error"
     unauthorized = "unauthorized"
+    malformed_multipart = "malformed_multipart"
 
 
 _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
@@ -27,6 +28,7 @@ _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
     ErrorCode.timeout: "Request timed out.",
     ErrorCode.internal_error: "Internal server error.",
     ErrorCode.unauthorized: "Unauthorized.",
+    ErrorCode.malformed_multipart: "Malformed multipart body.",
 }
 
 
@@ -73,4 +75,6 @@ def status_for(code: ErrorCode) -> int:
         return status.HTTP_504_GATEWAY_TIMEOUT
     if code is ErrorCode.unauthorized:
         return status.HTTP_401_UNAUTHORIZED
+    if code is ErrorCode.malformed_multipart:
+        return status.HTTP_400_BAD_REQUEST
     return status.HTTP_500_INTERNAL_SERVER_ERROR
