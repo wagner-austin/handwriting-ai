@@ -138,6 +138,29 @@ def test_train_with_scheduler_and_early_stop(tmp_path: Path) -> None:
     assert (out_dir / "model.pt").exists()
 
 
+def test_train_calls_evaluate_in_epoch(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    cfg = replace(cfg, out_dir=tmp_path / "out_eval", epochs=1)
+    train_base = _TinyBase(4)
+    test_base = _TinyBase(2)
+
+    called = {"n": 0}
+    _orig = mt._evaluate
+
+    def _spy(
+        model: mt.TrainableModel,
+        loader: Iterable[tuple[Tensor, Tensor]],
+        device: torch.device,
+    ) -> float:
+        called["n"] += 1
+        return _orig(model, loader, device)
+
+    mt._evaluate = _spy  # patch
+    out_dir = train_with_config(cfg, (train_base, test_base))
+    assert (out_dir / "model.pt").exists()
+    assert called["n"] >= 1
+
+
 def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
     # Patch _train_epoch to raise KeyboardInterrupt and ensure artifacts still write
     cfg = _cfg(tmp_path)
