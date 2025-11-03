@@ -1,0 +1,52 @@
+.PHONY: help install install-dev lock serve test lint check start stop clean guards
+
+help:
+	@echo "Targets:"
+	@echo "  make install     - Install dependencies with Poetry"
+	@echo "  make install-dev - Install with dev dependencies"
+	@echo "  make serve       - Run the API locally with uvicorn"
+	@echo "  make test        - Run pytest with coverage"
+	@echo "  make lint        - Ruff fix+format, then mypy (strict)"
+	@echo "  make check       - Lint + Test"
+	@echo "  make start       - Docker compose up (build)"
+	@echo "  make stop        - Docker compose down"
+	@echo "  make clean       - Prune and rebuild compose stack"
+	@echo "  make guards      - Guardrails: fail on Any/cast/ignore"
+
+install:
+	poetry lock
+	poetry install
+
+install-dev:
+	poetry lock
+	poetry install --with dev
+
+serve: install-dev
+	# Note: this expects an app module when implemented.
+	poetry run uvicorn handwriting_ai.api.app:app --host 0.0.0.0 --port $${APP__PORT:-8081}
+
+test: install-dev
+	poetry run pytest --cov=src --cov-report=term-missing
+
+lint: install-dev
+	poetry run ruff check . --fix
+	poetry run ruff format .
+	poetry run mypy
+
+check: lint | test
+
+guards:
+	@echo "Running guard checks (no Any/cast/ignore)..."
+	@if rg -n "\btyping\.Any\b|\bAny\b" src tests; then echo "Found Any" && exit 1; else echo "No Any found"; fi
+	@if rg -n "typing\.cast\(" src tests; then echo "Found typing.cast" && exit 1; else echo "No cast found"; fi
+	@if rg -n "type:\s*ignore" src tests; then echo "Found type: ignore" && exit 1; else echo "No type: ignore found"; fi
+
+start:
+	docker compose up -d --build
+
+stop:
+	docker compose down
+
+clean:
+	docker compose down -v --remove-orphans || true
+	docker compose up -d --build

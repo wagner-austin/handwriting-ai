@@ -1,0 +1,42 @@
+# Python cache and bytecode
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Virtual environments
+.venv/
+venv/
+
+# Poetry / packaging
+*.egg-info/
+dist/
+build/
+
+# Coverage / test caches
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environment and secrets
+.env
+.env.*
+!/.env.example
+
+# Service artifacts and logs
+artifacts/
+logs/
+corpus/
+
+# OS / editor junk
+.DS_Store
+Thumbs.db
+*.swp
+*.tmp
+
+# Node (if present)
+node_modules/
+

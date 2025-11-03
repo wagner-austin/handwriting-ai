@@ -1,0 +1,23 @@
+# Tunables live in this config file (checked into repo or mounted via config map).
+# Secrets must NOT be placed here; put them in .env (e.g., SECURITY__API_KEY).
+
+[app]
+data_root = "/data"
+artifacts_root = "/data/artifacts"
+logs_root = "/data/logs"
+threads = 0            # 0 = auto
+port = 8081
+
+[digits]
+model_dir = "/data/digits/models"
+active_model = "mnist_resnet18_v1"
+tta = false
+conf_threshold = 0.85
+max_image_mb = 2
+max_image_side_px = 1024
+predict_timeout_seconds = 5
+
+[security]
+# DO NOT store secrets here. SECURITY__API_KEY should come from environment if used.
+api_key_enabled = false
+

@@ -1,0 +1,21 @@
+version: "3.9"
+services:
+  handai:
+    build: .
+    container_name: handai
+    env_file:
+      - .env
+    environment:
+      # Mount a config path via env if your settings loader supports it later
+      # HANDWRITING_CONFIG: /app/config/handai.toml
+      APP__PORT: "8081"
+    ports:
+      - "8081:8081"
+    volumes:
+      - ./config:/app/config:ro
+      - ./artifacts:/data/artifacts
+      - ./logs:/data/logs
+    restart: unless-stopped
+
+volumes: {}
+
