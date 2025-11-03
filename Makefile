@@ -9,7 +9,7 @@ help:
 	@echo "  make install-dev - Install with dev dependencies"
 	@echo "  make serve       - Run the API locally with uvicorn"
 	@echo "  make test        - Run pytest with coverage"
-	@echo "  make lint        - Ruff fix+format, then mypy (strict)"
+	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
 	@echo "  make start       - Docker compose up (build)"
 	@echo "  make stop        - Docker compose down"
@@ -36,6 +36,7 @@ lint: install-dev
 	poetry run ruff format .
 	poetry run mypy
 	poetry run python scripts/guard_checks.py
+	poetry run yamllint -c .yamllint .
 
 check: lint | test
 
