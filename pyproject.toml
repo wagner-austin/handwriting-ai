@@ -10,6 +10,11 @@ authors = ["Your Team <team@example.com>"]
 packages = [{ include = "handwriting_ai", from = "src" }]
 readme = "README.md"
 
+[[tool.poetry.source]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+priority = "explicit"
+
 [tool.poetry.dependencies]
 python = "^3.11"
 fastapi = "^0.115.0"
@@ -20,9 +25,9 @@ Pillow = "^10.4.0"
 numpy = ">=1.26,<3"
 python-multipart = "^0.0.9"
 typing-extensions = "^4.12.2"
-# Torch CPU (install wheels as appropriate for platform)
-torch = {version = "^2.4.1", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
-torchvision = {version = "^0.19.1", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
+# Torch CPU only (explicit CPU wheels)
+torch = {version = "==2.4.1+cpu", source = "pytorch-cpu", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
+torchvision = {version = "==0.19.1+cpu", source = "pytorch-cpu", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"

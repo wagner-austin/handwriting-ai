@@ -18,7 +18,7 @@ WORKDIR /app
 RUN pip install --no-cache-dir poetry==1.8.3
 
 # Copy lockfiles first for better layer caching
-COPY pyproject.toml /app/
+COPY pyproject.toml poetry.lock /app/
 
 # Copy the rest of the project (app src, configs, docs as needed)
 COPY src /app/src
@@ -34,4 +34,3 @@ EXPOSE 8081
 
 # Default command (the app module will be implemented later)
 CMD ["/app/.venv/bin/uvicorn", "handwriting_ai.api.app:app", "--host", "0.0.0.0", "--port", "8081"]
-
