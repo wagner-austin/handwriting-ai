@@ -1,84 +1,149 @@
 from __future__ import annotations
 
 import argparse
-import json
-import random
-from dataclasses import dataclass
-from datetime import UTC, datetime
+import tomllib
 from pathlib import Path
-from typing import Final, Protocol
+from typing import Final
 
-import torch
-import torch.nn.functional as F  # noqa: N812 (torch convention)
-from PIL import Image
-from torch import Tensor
-from torch.utils.data import DataLoader, Dataset
 from torchvision import datasets
 
-from handwriting_ai.preprocess import PreprocessOptions, preprocess_signature, run_preprocess
+from handwriting_ai.training import TrainConfig, train_with_config
 
 MNIST_N_CLASSES: Final[int] = 10
 
 
-@dataclass(frozen=True)
-class TrainConfig:
-    data_root: Path
-    out_dir: Path
-    model_id: str
-    epochs: int
-    batch_size: int
-    lr: float
-    seed: int
-    device: str
+def _default_config() -> TrainConfig:
+    return TrainConfig(
+        data_root=Path("./data/mnist"),
+        out_dir=Path("./artifacts/digits/models"),
+        model_id="mnist_resnet18_v1",
+        epochs=4,
+        batch_size=128,
+        lr=1e-3,
+        weight_decay=1e-2,
+        seed=42,
+        device="cpu",
+        optim="adamw",
+        scheduler="cosine",
+        step_size=10,
+        gamma=0.5,
+        min_lr=1e-5,
+        patience=0,
+        min_delta=5e-4,
+        threads=0,
+        augment=False,
+        aug_rotate=10.0,
+        aug_translate=0.1,
+    )
 
 
-class MNISTLike(Protocol):
-    def __len__(self) -> int: ...
-    def __getitem__(self, idx: int) -> tuple[Image.Image, int]: ...
+def _apply_overrides(cfg: TrainConfig, t: dict[str, object]) -> TrainConfig:
+    v = t.get("data_root")
+    data_root = Path(v) if isinstance(v, str) else cfg.data_root
+    v = t.get("out_dir")
+    out_dir = Path(v) if isinstance(v, str) else cfg.out_dir
+    v = t.get("model_id")
+    model_id = v if isinstance(v, str) else cfg.model_id
+    v = t.get("epochs")
+    epochs = v if isinstance(v, int) else cfg.epochs
+    v = t.get("batch_size")
+    batch_size = v if isinstance(v, int) else cfg.batch_size
+    v = t.get("lr")
+    lr = float(v) if isinstance(v, int | float) else cfg.lr
+    v = t.get("weight_decay")
+    weight_decay = float(v) if isinstance(v, int | float) else cfg.weight_decay
+    v = t.get("seed")
+    seed = v if isinstance(v, int) else cfg.seed
+    v = t.get("device")
+    device = v if isinstance(v, str) else cfg.device
+    v = t.get("optim")
+    optim = v if isinstance(v, str) else cfg.optim
+    v = t.get("scheduler")
+    scheduler = v if isinstance(v, str) else cfg.scheduler
+    v = t.get("step_size")
+    step_size = v if isinstance(v, int) else cfg.step_size
+    v = t.get("gamma")
+    gamma = float(v) if isinstance(v, int | float) else cfg.gamma
+    v = t.get("min_lr")
+    min_lr = float(v) if isinstance(v, int | float) else cfg.min_lr
+    v = t.get("patience")
+    patience = v if isinstance(v, int) else cfg.patience
+    v = t.get("min_delta")
+    min_delta = float(v) if isinstance(v, int | float) else cfg.min_delta
+    v = t.get("threads")
+    threads = v if isinstance(v, int) else cfg.threads
+    v = t.get("augment")
+    augment = v if isinstance(v, bool) else cfg.augment
+    v = t.get("aug_rotate")
+    aug_rotate = float(v) if isinstance(v, int | float) else cfg.aug_rotate
+    v = t.get("aug_translate")
+    aug_translate = float(v) if isinstance(v, int | float) else cfg.aug_translate
+
+    return TrainConfig(
+        data_root=data_root,
+        out_dir=out_dir,
+        model_id=model_id,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        weight_decay=weight_decay,
+        seed=seed,
+        device=device,
+        optim=optim,
+        scheduler=scheduler,
+        step_size=step_size,
+        gamma=gamma,
+        min_lr=min_lr,
+        patience=patience,
+        min_delta=min_delta,
+        threads=threads,
+        augment=augment,
+        aug_rotate=aug_rotate,
+        aug_translate=aug_translate,
+    )
 
 
-class _PreprocessDataset(Dataset[tuple[Tensor, int]]):
-    """MNIST dataset that applies the service's preprocess to prevent drift.
-
-    Each sample returns a tensor with shape (1, 28, 28) and an int label in [0, 9].
-    """
-
-    def __init__(self, base: MNISTLike) -> None:
-        self._base = base
-        self._opts = PreprocessOptions(
-            invert=None,
-            center=True,
-            visualize=False,
-            visualize_max_kb=0,
-        )
-
-    def __len__(self) -> int:  # pragma: no cover - delegated
-        return len(self._base)
-
-    def __getitem__(self, idx: int) -> tuple[Tensor, int]:
-        img, label = self._base[idx]
-        if not isinstance(img, Image.Image):  # pragma: no cover - torchvision contract
-            raise RuntimeError("MNIST returned a non-image sample")
-        out = run_preprocess(img, self._opts)
-        # run_preprocess returns (1,1,28,28); remove batch dim for dataset sample -> (1,28,28)
-        t = out.tensor.squeeze(0)
-        return t, int(label)
+def _read_defaults(path: Path | None) -> TrainConfig:
+    cfg = _default_config()
+    if path is None or not path.exists():
+        return cfg
+    with path.open("rb") as f:
+        parsed = tomllib.load(f)
+    t = parsed.get("trainer", {})
+    return _apply_overrides(cfg, t if isinstance(t, dict) else {})
 
 
 def _parse_args() -> TrainConfig:
+    # Stage 1: read --config to use as defaults
+    ap0 = argparse.ArgumentParser(add_help=False)
+    ap0.add_argument("--config", type=str, default="./config/trainer.toml")
+    ns0, _ = ap0.parse_known_args()
+    cfg_path = Path(ns0.config) if ns0.config else None
+    defaults = _read_defaults(cfg_path)
+
+    # Stage 2: full parser with defaults from config
     ap = argparse.ArgumentParser(description="Train MNIST ResNet-18 with service preprocess")
-    ap.add_argument("--data-root", default="./data/mnist", help="Directory for MNIST cache")
-    ap.add_argument(
-        "--out-dir", default="./artifacts/digits/models", help="Base output directory for models"
-    )
-    ap.add_argument("--model-id", default="mnist_resnet18_v1", help="Model id folder name")
-    ap.add_argument("--epochs", type=int, default=4)
-    ap.add_argument("--batch-size", type=int, default=128)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument(
-        "--device", choices=["cpu", "cuda"], default="cpu", help="Training device (default cpu)"
-    )
+    ap.add_argument("--config", type=str, default=str(cfg_path) if cfg_path else None)
+    ap.add_argument("--data-root", default=str(defaults.data_root))
+    ap.add_argument("--out-dir", default=str(defaults.out_dir))
+    ap.add_argument("--model-id", default=defaults.model_id)
+    ap.add_argument("--epochs", type=int, default=defaults.epochs)
+    ap.add_argument("--batch-size", type=int, default=defaults.batch_size)
+    ap.add_argument("--lr", type=float, default=defaults.lr)
+    ap.add_argument("--weight-decay", type=float, default=defaults.weight_decay)
+    ap.add_argument("--seed", type=int, default=defaults.seed)
+    ap.add_argument("--device", choices=["cpu", "cuda"], default=defaults.device)
+    ap.add_argument("--optim", choices=["sgd", "adam", "adamw"], default=defaults.optim)
+    ap.add_argument("--scheduler", choices=["none", "cosine", "step"], default=defaults.scheduler)
+    ap.add_argument("--step-size", type=int, default=defaults.step_size)
+    ap.add_argument("--gamma", type=float, default=defaults.gamma)
+    ap.add_argument("--min-lr", type=float, default=defaults.min_lr)
+    ap.add_argument("--patience", type=int, default=defaults.patience)
+    ap.add_argument("--min-delta", type=float, default=defaults.min_delta)
+    ap.add_argument("--threads", type=int, default=defaults.threads)
+    ap.add_argument("--augment", action="store_true", default=defaults.augment)
+    ap.add_argument("--aug-rotate", type=float, default=defaults.aug_rotate)
+    ap.add_argument("--aug-translate", type=float, default=defaults.aug_translate)
     args = ap.parse_args()
     return TrainConfig(
         data_root=Path(str(args.data_root)),
@@ -87,216 +152,28 @@ def _parse_args() -> TrainConfig:
         epochs=int(args.epochs),
         batch_size=int(args.batch_size),
         lr=float(args.lr),
+        weight_decay=float(args.weight_decay),
         seed=int(args.seed),
         device=str(args.device),
+        optim=str(args.optim),
+        scheduler=str(args.scheduler),
+        step_size=int(args.step_size),
+        gamma=float(args.gamma),
+        min_lr=float(args.min_lr),
+        patience=int(args.patience),
+        min_delta=float(args.min_delta),
+        threads=int(args.threads),
+        augment=bool(args.augment),
+        aug_rotate=float(args.aug_rotate),
+        aug_translate=float(args.aug_translate),
     )
-
-
-def _set_seed(seed: int) -> None:
-    random.seed(seed)
-    torch.manual_seed(seed)
-
-
-class _BasicBlock(torch.nn.Module):
-    expansion: int = 1
-
-    def __init__(
-        self,
-        in_planes: int,
-        planes: int,
-        stride: int = 1,
-        downsample: torch.nn.Module | None = None,
-    ) -> None:
-        super().__init__()
-        self.conv1 = torch.nn.Conv2d(
-            in_planes, planes, kernel_size=3, stride=stride, padding=1, bias=False
-        )
-        self.bn1 = torch.nn.BatchNorm2d(planes)
-        self.relu = torch.nn.ReLU(inplace=True)
-        self.conv2 = torch.nn.Conv2d(planes, planes, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn2 = torch.nn.BatchNorm2d(planes)
-        self.downsample = downsample
-
-    def forward(self, x: Tensor) -> Tensor:  # pragma: no cover - exercised indirectly
-        identity = x
-        out = self.conv1(x)
-        out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        out = self.bn2(out)
-        if self.downsample is not None:
-            identity = self.downsample(x)
-        return self.relu(out + identity)
-
-
-class _ResNet(torch.nn.Module):
-    def __init__(
-        self, block: type[_BasicBlock], layers: tuple[int, int, int, int], num_classes: int
-    ) -> None:
-        super().__init__()
-        self.inplanes = 64
-        self.conv1 = torch.nn.Conv2d(1, 64, kernel_size=3, stride=1, padding=1, bias=False)
-        self.bn1 = torch.nn.BatchNorm2d(64)
-        self.relu = torch.nn.ReLU(inplace=True)
-        self.maxpool = torch.nn.Identity()
-        self.layer1 = self._make_layer(block, 64, layers[0])
-        self.layer2 = self._make_layer(block, 128, layers[1], stride=2)
-        self.layer3 = self._make_layer(block, 256, layers[2], stride=2)
-        self.layer4 = self._make_layer(block, 512, layers[3], stride=2)
-        self.avgpool = torch.nn.AdaptiveAvgPool2d((1, 1))
-        self.fc = torch.nn.Linear(512 * block.expansion, num_classes)
-
-    def _make_layer(
-        self, block: type[_BasicBlock], planes: int, blocks: int, stride: int = 1
-    ) -> torch.nn.Sequential:
-        downsample: torch.nn.Module | None = None
-        if stride != 1 or self.inplanes != planes * block.expansion:
-            downsample = torch.nn.Sequential(
-                torch.nn.Conv2d(
-                    self.inplanes,
-                    planes * block.expansion,
-                    kernel_size=1,
-                    stride=stride,
-                    bias=False,
-                ),
-                torch.nn.BatchNorm2d(planes * block.expansion),
-            )
-        layers: list[torch.nn.Module] = []
-        layers.append(block(self.inplanes, planes, stride, downsample))
-        self.inplanes = planes * block.expansion
-        for _ in range(1, blocks):
-            layers.append(block(self.inplanes, planes))
-        return torch.nn.Sequential(*layers)
-
-    def forward(self, x: Tensor) -> Tensor:  # pragma: no cover - exercised indirectly
-        x = self.conv1(x)
-        x = self.bn1(x)
-        x = self.relu(x)
-        x = self.maxpool(x)
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.avgpool(x)
-        x = torch.flatten(x, 1)
-        return self.fc(x)
-
-
-def _build_model() -> torch.nn.Module:
-    return _ResNet(_BasicBlock, (2, 2, 2, 2), MNIST_N_CLASSES)
-
-
-def _evaluate(
-    model: torch.nn.Module,
-    loader: DataLoader[tuple[Tensor, int]],
-    device: torch.device,
-) -> float:
-    model.eval()
-    total = 0
-    correct = 0
-    with torch.no_grad():
-        for x, y in loader:
-            logits = model(x.to(device))
-            preds = logits.argmax(dim=1)
-            correct += int((preds.cpu() == y).sum().item())
-            total += y.size(0)
-    return (correct / total) if total > 0 else 0.0
 
 
 def main() -> None:
-    import os
-
     cfg = _parse_args()
-    _set_seed(cfg.seed)
-    device = torch.device(cfg.device)
-    # Use all CPU cores for training (removed thread limit from inference config)
-    # torch.set_num_threads(1)  # <- This was limiting to single thread!
-
-    # Log threading configuration
-    print(f"System CPU cores: {os.cpu_count()}")
-    print(f"PyTorch threads configured: {torch.get_num_threads()}")
-    print(f"PyTorch intraop threads: {torch.get_num_interop_threads()}")
-    print(f"Training device: {device}")
-    print()
-
-    # Load datasets and wrap with preprocess
     train_base = datasets.MNIST(cfg.data_root.as_posix(), train=True, download=True)
     test_base = datasets.MNIST(cfg.data_root.as_posix(), train=False, download=True)
-    train_ds = _PreprocessDataset(train_base)
-    test_ds = _PreprocessDataset(test_base)
-    # num_workers=0 for Windows compatibility (multiprocessing hangs)
-    # Training parallelism (PyTorch ops) is unaffected
-    train_loader: DataLoader[tuple[Tensor, int]] = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0
-    )
-    test_loader: DataLoader[tuple[Tensor, int]] = DataLoader(
-        test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0
-    )
-
-    model = _build_model().to(device)
-    print(f"Model built. Starting training on {len(train_ds)} samples...")
-
-    for ep in range(1, cfg.epochs + 1):
-        print(f"Starting epoch {ep}/{cfg.epochs}...")
-        model.train()
-        total = 0
-        loss_sum = 0.0
-        num_batches = len(train_loader)
-        for batch_idx, (x, y) in enumerate(train_loader):
-            if batch_idx % 50 == 0:
-                print(f"  Loading batch {batch_idx}...")
-
-            x = x.to(device)
-            y = y.to(device)
-
-            if batch_idx % 50 == 0:
-                print("  Running forward pass...")
-
-            model.zero_grad(set_to_none=True)
-            logits = model(x)
-            loss = F.cross_entropy(logits, y)
-
-            if batch_idx % 50 == 0:
-                print("  Running backward pass...")
-
-            torch.autograd.backward((loss,))
-
-            if batch_idx % 50 == 0:
-                print("  Updating parameters...")
-
-            for p in model.parameters():
-                if p.grad is not None:
-                    p.data = p.data - cfg.lr * p.grad.data
-            total += y.size(0)
-            loss_sum += float(loss.item()) * y.size(0)
-
-            # Print progress every 50 batches
-            if batch_idx % 50 == 0:
-                avg_loss = loss_sum / total if total > 0 else 0.0
-                print(f"  Batch [{batch_idx}/{num_batches}] completed - Loss: {avg_loss:.4f}")
-        train_loss = loss_sum / total if total > 0 else 0.0
-        val_acc = _evaluate(model, test_loader, device)
-        print(f"epoch {ep}: train_loss={train_loss:.4f} val_acc={val_acc:.4f}")
-
-    # Write artifact
-    model_dir = cfg.out_dir / cfg.model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
-    sd = model.state_dict()
-    torch.save(sd, (model_dir / "model.pt").as_posix())
-
-    manifest = {
-        "schema_version": "v1",
-        "model_id": cfg.model_id,
-        "arch": "resnet18",
-        "n_classes": MNIST_N_CLASSES,
-        "version": "1.0.0",
-        "created_at": datetime.now(UTC).isoformat(),
-        "preprocess_hash": preprocess_signature(),
-        "val_acc": float(_evaluate(model, test_loader, device)),
-        "temperature": 1.0,
-    }
-    (model_dir / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
-    print(f"Wrote artifact to: {model_dir}")
+    train_with_config(cfg, (train_base, test_base))
 
 
 if __name__ == "__main__":  # pragma: no cover - script entry
