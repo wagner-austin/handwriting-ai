@@ -57,12 +57,15 @@ jobs:
       - name: Validate docker-compose config
         run: docker compose config --quiet
 
-      - name: Build service image (compose)
-        run: docker compose build
-
       - name: Build image (direct)
         run: docker build -t handai:ci .
 
       - name: Smoke test container entry (Python available)
         run: |
           docker run --rm --entrypoint /app/.venv/bin/python handai:ci -c "import sys; print(sys.version)"
+
+      - name: Cleanup Docker space
+        if: always()
+        run: |
+          docker builder prune -af || true
+          docker image prune -af || true
