@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+import json
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final, Literal, Protocol, TypedDict
+
+from handwriting_ai.inference.manifest import ModelManifest
+from handwriting_ai.training.mnist_train import TrainConfig
+
+DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
+
+
+class DigitsTrainJobV1(TypedDict):
+    type: Literal["digits.train.v1"]
+    request_id: str
+    user_id: int
+    model_id: str
+    epochs: int
+    batch_size: int
+    lr: float
+    seed: int
+    augment: bool
+    notes: str | None
+
+
+class DigitsTrainStartedEvent(TypedDict):
+    type: Literal["started"]
+    request_id: str
+    user_id: int
+    model_id: str
+    total_epochs: int
+
+
+class DigitsTrainCompletedEvent(TypedDict):
+    type: Literal["completed"]
+    request_id: str
+    user_id: int
+    model_id: str
+    run_id: str
+    val_acc: float
+
+
+class DigitsTrainFailedEvent(TypedDict):
+    type: Literal["failed"]
+    request_id: str
+    user_id: int
+    model_id: str
+    error_kind: Literal["user", "system"]
+    message: str
+
+
+Event = DigitsTrainStartedEvent | DigitsTrainCompletedEvent | DigitsTrainFailedEvent
+
+
+def encode_event(event: Event) -> str:
+    return json.dumps(event, separators=(",", ":"))
+
+
+class Publisher(Protocol):
+    def publish(self, channel: str, message: str) -> int: ...
+
+
+def _get_env(name: str, default: str) -> str:
+    v = os.getenv(name)
+    return v if isinstance(v, str) and v.strip() != "" else default
+
+
+def _publish_event(pub: Publisher | None, channel: str, event: Event) -> None:
+    if pub is None:
+        return
+    try:
+        pub.publish(channel, encode_event(event))
+    except (OSError, ValueError):
+        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+
+
+def _build_cfg(payload: DigitsTrainJobV1) -> TrainConfig:
+    data_root = Path("./data/mnist")
+    out_dir = Path("./artifacts/digits/models")
+    return TrainConfig(
+        data_root=data_root,
+        out_dir=out_dir,
+        model_id=payload["model_id"],
+        epochs=payload["epochs"],
+        batch_size=payload["batch_size"],
+        lr=float(payload["lr"]),
+        weight_decay=1e-2,
+        seed=payload["seed"],
+        device="cpu",
+        optim="adamw",
+        scheduler="cosine",
+        step_size=10,
+        gamma=0.5,
+        min_lr=1e-5,
+        patience=0,
+        min_delta=5e-4,
+        threads=0,
+        augment=bool(payload["augment"]),
+        aug_rotate=10.0,
+        aug_translate=0.1,
+    )
+
+
+def _run_training(_: TrainConfig) -> Path:
+    # Runtime wiring expected; tests monkeypatch this symbol.
+    raise RuntimeError("_run_training not wired in this environment")
+
+
+@dataclass(frozen=True)
+class _Context:
+    publisher: Publisher | None
+    channel: str
+
+
+def process_train_job(payload: dict[str, object]) -> None:
+    typ = payload.get("type") if isinstance(payload, dict) else None
+    if typ != "digits.train.v1":
+        _emit_failed(payload, "user", "invalid job type")
+        return
+
+    try:
+        p: DigitsTrainJobV1 = {
+            "type": "digits.train.v1",
+            "request_id": str(payload.get("request_id")),
+            "user_id": _as_int(payload.get("user_id")),
+            "model_id": str(payload.get("model_id")),
+            "epochs": _as_int(payload.get("epochs")),
+            "batch_size": _as_int(payload.get("batch_size")),
+            "lr": _as_float(payload.get("lr")),
+            "seed": _as_int(payload.get("seed")),
+            "augment": bool(payload.get("augment", False)),
+            "notes": (str(payload["notes"]) if isinstance(payload.get("notes"), str) else None),
+        }
+    except (ValueError, TypeError):
+        logging.getLogger("handwriting_ai").info("digits_job_invalid_payload")
+        _emit_failed(payload, "user", "invalid payload fields")
+        return
+
+    ctx = _make_context()
+
+    started: DigitsTrainStartedEvent = {
+        "type": "started",
+        "request_id": p["request_id"],
+        "user_id": p["user_id"],
+        "model_id": p["model_id"],
+        "total_epochs": p["epochs"],
+    }
+    _publish_event(ctx.publisher, ctx.channel, started)
+
+    try:
+        cfg = _build_cfg(p)
+        model_dir = _run_training(cfg)
+        man = ModelManifest.from_path(model_dir / "manifest.json")
+        completed: DigitsTrainCompletedEvent = {
+            "type": "completed",
+            "request_id": p["request_id"],
+            "user_id": p["user_id"],
+            "model_id": p["model_id"],
+            "run_id": man.created_at.isoformat(),
+            "val_acc": float(man.val_acc),
+        }
+        _publish_event(ctx.publisher, ctx.channel, completed)
+    except (OSError, RuntimeError, ValueError, TypeError):
+        _emit_failed(payload, "system", "system error")
+        raise
+
+
+def _make_context() -> _Context:
+    pub = _make_publisher()
+    ch = _get_env("DIGITS_EVENTS_CHANNEL", DEFAULT_EVENTS_CHANNEL)
+    return _Context(publisher=pub, channel=ch)
+
+
+def _make_publisher() -> Publisher | None:
+    # No-op by default; runtime may override via monkeypatching or custom wiring
+    return None
+
+
+def _as_int(v: object) -> int:
+    if isinstance(v, bool):
+        raise ValueError("bool not allowed")
+    if isinstance(v, int):
+        return v
+    if isinstance(v, str):
+        return int(v)
+    raise ValueError("invalid int")
+
+
+def _as_float(v: object) -> float:
+    if isinstance(v, bool):
+        raise ValueError("bool not allowed")
+    if isinstance(v, float):
+        return v
+    if isinstance(v, int):
+        return float(v)
+    if isinstance(v, str):
+        return float(v)
+    raise ValueError("invalid float")
+
+
+def _emit_failed(
+    payload: dict[str, object] | object, kind: Literal["user", "system"], msg: str
+) -> None:
+    ctx = _make_context()
+    req = ""
+    uid = 0
+    mid = ""
+    if isinstance(payload, dict):
+        req = str(payload.get("request_id", ""))
+        try:
+            uid = _as_int(payload.get("user_id"))
+        except ValueError:
+            logging.getLogger("handwriting_ai").debug("digits_job_user_id_invalid")
+            uid = 0
+        mid = str(payload.get("model_id", ""))
+    failed: DigitsTrainFailedEvent = {
+        "type": "failed",
+        "request_id": req,
+        "user_id": uid,
+        "model_id": mid,
+        "error_kind": kind,
+        "message": msg,
+    }
+    _publish_event(ctx.publisher, ctx.channel, failed)
