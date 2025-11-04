@@ -66,6 +66,14 @@ THREADS ?= 16
 AUGMENT ?= 1
 AUG_ROTATE ?= 12
 AUG_TRANSLATE ?= 0.1
+NOISE_PROB ?= 0
+NOISE_SALT_FRAC ?= 0.5
+DOTS_PROB ?= 0
+DOTS_COUNT ?= 0
+DOTS_SIZE ?= 1
+BLUR_SIGMA ?= 0
+MORPH ?= none
+MORPH_KERNEL ?= 1
 
 # Train a service-compatible MNIST model (PowerShell-friendly)
 train: install-dev
@@ -90,6 +98,15 @@ train: install-dev
 		$(if $(filter $(AUGMENT),1 true yes),--augment,) \
 		--aug-rotate $(AUG_ROTATE) \
 		--aug-translate $(AUG_TRANSLATE) \
+		--noise-prob $(NOISE_PROB) \
+		--noise-salt-vs-pepper $(NOISE_SALT_FRAC) \
+		--dots-prob $(DOTS_PROB) \
+		--dots-count $(DOTS_COUNT) \
+		--dots-size $(DOTS_SIZE) \
+		--blur-sigma $(BLUR_SIGMA) \
+		--morph $(MORPH) \
+		--morph-kernel $(MORPH_KERNEL) \
+
 		--log-style pretty
 
 train-long: install-dev
@@ -113,3 +130,4 @@ stop:
 clean:
 	docker compose down -v --remove-orphans || true
 	docker compose up -d --build
+
