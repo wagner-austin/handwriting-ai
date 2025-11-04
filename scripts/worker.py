@@ -86,6 +86,10 @@ def _real_run_training(_: TrainConfig) -> Path:
     cap = _decide_batch_cap(_mem_limit_bytes())
     if cap is not None and cfg.batch_size > cap:
         cfg = replace(cfg, batch_size=cap)
+    # Log the effective auto-sized configuration for observability
+    logging.getLogger("handwriting_ai").info(
+        "train_auto_config threads=%s batch_size=%s", cfg.threads, cfg.batch_size
+    )
     data_root = cfg.data_root
     data_root.mkdir(parents=True, exist_ok=True)
     # MNIST returns PIL Image and int labels; matches MNISTLike protocol expectations
