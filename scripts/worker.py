@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from http.client import HTTPConnection, HTTPSConnection
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
@@ -80,6 +80,12 @@ def _make_publisher_from_env() -> dj.Publisher | None:
 
 def _real_run_training(_: TrainConfig) -> Path:
     cfg = _
+    # Auto-size to container limits (no manual tunables required)
+    if getattr(cfg, "threads", 0) <= 0:
+        cfg = replace(cfg, threads=_detect_cpu_threads())
+    cap = _decide_batch_cap(_mem_limit_bytes())
+    if cap is not None and cfg.batch_size > cap:
+        cfg = replace(cfg, batch_size=cap)
     data_root = cfg.data_root
     data_root.mkdir(parents=True, exist_ok=True)
     # MNIST returns PIL Image and int labels; matches MNISTLike protocol expectations
@@ -224,6 +230,67 @@ def _resolve_upload_url() -> str:
 
 
 # No multi-name env readers by design (shared globals only)
+
+
+# ---- Resource detection helpers (auto-sizing) ----
+
+
+def _read_text_file(path: Path) -> str | None:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _detect_cpu_threads() -> int:
+    cpu_max = _read_text_file(Path("/sys/fs/cgroup/cpu.max"))
+    if cpu_max and cpu_max != "max":
+        parts = cpu_max.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            quota = int(parts[0])
+            period = int(parts[1]) or 100000
+            if quota > 0 and period > 0:
+                return max(1, quota // period)
+    cfs_quota = _read_text_file(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"))
+    cfs_period = _read_text_file(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us"))
+    if cfs_quota and cfs_period and cfs_quota.isdigit() and cfs_period.isdigit():
+        quota_us = int(cfs_quota)
+        period_us = int(cfs_period) or 100000
+        if quota_us > 0 and period_us > 0:
+            return max(1, quota_us // period_us)
+    aff = getattr(os, "sched_getaffinity", None)
+    if callable(aff):
+        try:
+            return max(1, len(aff(0)))
+        except OSError:
+            # Fall through to cpu_count()
+            pass
+    return max(1, os.cpu_count() or 1)
+
+
+def _mem_limit_bytes() -> int | None:
+    mem_max = _read_text_file(Path("/sys/fs/cgroup/memory.max"))
+    if mem_max and mem_max.isdigit():
+        val = int(mem_max)
+        return None if val <= 0 else val
+    mem_v1 = _read_text_file(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
+    if mem_v1 and mem_v1.isdigit():
+        val = int(mem_v1)
+        return val if val < (1 << 60) else None
+    return None
+
+
+def _decide_batch_cap(mem_bytes: int | None) -> int | None:
+    if mem_bytes is None:
+        return None
+    gb = mem_bytes / (1024 * 1024 * 1024)
+    if gb < 1.0:
+        return 64
+    if gb < 2.0:
+        return 128
+    if gb < 4.0:
+        return 256
+    return 512
 
 
 def _run_once(payload_path: Path) -> int:
