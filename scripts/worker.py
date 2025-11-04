@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 from urllib.parse import urlparse
 
+import redis
+from torchvision.datasets import MNIST
+
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.logging import init_logging
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
@@ -45,8 +48,6 @@ if TYPE_CHECKING:
 else:  # pragma: no cover - runtime import only
 
     def _redis_from_url(url: str):
-        import redis
-
         return redis.Redis.from_url(url)
 
 
@@ -78,9 +79,6 @@ def _make_publisher_from_env() -> dj.Publisher | None:
 
 
 def _real_run_training(_: TrainConfig) -> Path:
-    # Import inside function to avoid test-time dependency and speed
-    from torchvision.datasets import MNIST
-
     cfg = _
     data_root = cfg.data_root
     data_root.mkdir(parents=True, exist_ok=True)
