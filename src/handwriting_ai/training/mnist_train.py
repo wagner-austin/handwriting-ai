@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import json
 import logging
-import secrets
-import shutil
 from collections.abc import Iterable
 from dataclasses import dataclass
-from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 
 import torch
-import torch.nn.functional as F  # noqa: N812
 from PIL import Image
 from torch import Tensor
 from torch.nn.parameter import Parameter
@@ -24,11 +19,22 @@ from handwriting_ai.inference.engine import (
     _build_model as _engine_build_model,
 )
 from handwriting_ai.logging import get_logger, init_logging
-from handwriting_ai.preprocess import preprocess_signature
 
+from .artifacts import write_artifacts as _write_artifacts_impl
 from .augment import apply_affine as _apply_affine_impl
 from .dataset import make_loaders as _make_loaders_impl
+from .loops import evaluate as _evaluate_impl
+from .loops import train_epoch as _train_epoch_impl
 from .optim import build_optimizer_and_scheduler as _build_optimizer_and_scheduler_impl
+from .progress import (
+    ProgressEmitter,
+)
+from .progress import (
+    emit_progress as _emit_progress,
+)
+from .progress import (
+    set_progress_emitter as _set_progress_emitter,
+)
 
 
 class TrainableModel(TorchModel, Protocol):
@@ -104,16 +110,7 @@ def _evaluate(
     loader: Iterable[tuple[Tensor, Tensor]],
     device: torch.device,
 ) -> float:
-    model.eval()
-    total = 0
-    correct = 0
-    with torch.no_grad():
-        for x, y in loader:
-            logits = model(x.to(device))
-            preds = logits.argmax(dim=1)
-            correct += int((preds.cpu() == y).sum().item())
-            total += y.size(0)
-    return (correct / total) if total > 0 else 0.0
+    return _evaluate_impl(model, loader, device)
 
 
 def _configure_threads(cfg: TrainConfig) -> None:
@@ -158,46 +155,15 @@ def _train_epoch(
     ep_total: int,
     total_batches: int,
 ) -> float:
-    import time as _time
-
-    log = get_logger()
-    model.train()
-    total = 0
-    loss_sum = 0.0
-    log_every = 10
-    for batch_idx, (x, y) in enumerate(train_loader):
-        t0 = _time.perf_counter()
-        if batch_idx % log_every == 0:
-            log.debug(f"train_loading_batch idx={batch_idx}")
-        x = x.to(device)
-        y = y.to(device)
-        if batch_idx % log_every == 0:
-            log.debug("train_forward")
-        optimizer.zero_grad(set_to_none=True)
-        logits = model(x)
-        loss = F.cross_entropy(logits, y)
-        if batch_idx % log_every == 0:
-            log.debug("train_backward")
-        torch.autograd.backward((loss,))
-        if batch_idx % log_every == 0:
-            log.debug("train_step")
-        optimizer.step()
-        total += y.size(0)
-        loss_sum += float(loss.item()) * y.size(0)
-        if batch_idx % log_every == 0:
-            avg_loss = loss_sum / total if total > 0 else 0.0
-            with torch.no_grad():
-                preds = logits.argmax(dim=1)
-                batch_acc = float((preds == y).float().mean().item())
-            dt = _time.perf_counter() - t0
-            ips = (int(y.size(0)) / dt) if dt > 0 else 0.0
-            log.info(
-                f"train_batch_done epoch={ep}/{ep_total} "
-                f"batch={batch_idx+1}/{total_batches} "
-                f"batch_loss={float(loss.item()):.4f} batch_acc={batch_acc:.4f} "
-                f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f}"
-            )
-    return loss_sum / total if total > 0 else 0.0
+    return _train_epoch_impl(
+        model,
+        train_loader,
+        device,
+        optimizer,
+        ep=ep,
+        ep_total=ep_total,
+        total_batches=total_batches,
+    )
 
 
 def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> Path:
@@ -265,62 +231,26 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     except KeyboardInterrupt:
         logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
 
-    # Write artifact (unique run files + stable copies)
-    model_dir = cfg.out_dir / cfg.model_id
-    model_dir.mkdir(parents=True, exist_ok=True)
+    # Write artifacts via helper
     sd = best_sd if best_sd is not None else model.state_dict()
-    run_ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
-    run_rand = secrets.token_hex(3)
-    run_id = f"{run_ts}-{run_rand}"
-    model_unique = model_dir / f"model-{run_id}.pt"
-    manifest_unique = model_dir / f"manifest-{run_id}.json"
-    torch.save(sd, model_unique.as_posix())
-    manifest = {
-        "schema_version": "v1.1",
-        "model_id": cfg.model_id,
-        "arch": "resnet18",
-        "n_classes": MNIST_N_CLASSES,
-        "version": "1.0.0",
-        "created_at": datetime.now(UTC).isoformat(),
-        "preprocess_hash": preprocess_signature(),
-        "val_acc": float(best_val if best_val >= 0 else _evaluate(model, test_loader, device)),
-        "temperature": 1.0,
-        # Run metadata (ignored by loader but helpful for provenance)
-        "run_id": run_id,
-        "epochs": int(cfg.epochs),
-        "batch_size": int(cfg.batch_size),
-        "lr": float(cfg.lr),
-        "seed": int(cfg.seed),
-        "device": str(cfg.device),
-        "optim": str(cfg.optim),
-        "scheduler": str(cfg.scheduler),
-        "augment": bool(cfg.augment),
-    }
-    manifest_unique.write_text(json.dumps(manifest), encoding="utf-8")
-    # Promote to stable filenames for compatibility
-    shutil.copy2(model_unique, model_dir / "model.pt")
-    shutil.copy2(manifest_unique, model_dir / "manifest.json")
-    log.info(f"artifact_written_to={model_dir} run_id={run_id}")
+    val = float(best_val if best_val >= 0 else _evaluate(model, test_loader, device))
+    model_dir = _write_artifacts_impl(
+        out_dir=cfg.out_dir,
+        model_id=cfg.model_id,
+        model_state=sd,
+        epochs=cfg.epochs,
+        batch_size=cfg.batch_size,
+        lr=cfg.lr,
+        seed=cfg.seed,
+        device_str=cfg.device,
+        optim=cfg.optim,
+        scheduler=cfg.scheduler,
+        augment=cfg.augment,
+        test_val_acc=val,
+    )
+    log.info(f"artifact_written_to={model_dir}")
     return model_dir
 
 
-class ProgressEmitter(Protocol):
-    def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None: ...
-
-
-_progress_emitter: ProgressEmitter | None = None
-
-
 def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
-    global _progress_emitter
-    _progress_emitter = emitter
-
-
-def _emit_progress(epoch: int, total_epochs: int, val_acc: float | None) -> None:
-    em = _progress_emitter
-    if em is None:
-        return
-    try:
-        em.emit(epoch=epoch, total_epochs=total_epochs, val_acc=val_acc)
-    except (RuntimeError, ValueError, TypeError):
-        logging.getLogger("handwriting_ai").debug("progress_emitter_failed")
+    _set_progress_emitter(emitter)
