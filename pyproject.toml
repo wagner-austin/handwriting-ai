@@ -28,6 +28,8 @@ typing-extensions = "^4.12.2"
 # Torch CPU only (explicit CPU wheels)
 torch = {version = "==2.4.1+cpu", source = "pytorch-cpu", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
 torchvision = {version = "==0.19.1+cpu", source = "pytorch-cpu", markers = "platform_system != 'Darwin' or platform_machine != 'arm64'"}
+redis = "^5.0.0"
+rq = "^1.16.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
@@ -82,7 +84,7 @@ check_untyped_defs = true
 no_implicit_reexport = true
 show_error_codes = true
 pretty = true
-files = ["src", "tests", "scripts/train_mnist_resnet18.py", "scripts/prestart.py"]
+files = ["src", "tests", "scripts/train_mnist_resnet18.py", "scripts/prestart.py", "scripts/worker.py", "scripts/rq_worker.py"]
 plugins = ["pydantic.mypy"]
 
 # Narrow, explicit relaxations for third‑party integration boundaries to avoid false Any from
@@ -100,10 +102,16 @@ show_missing = true
 [[tool.mypy.overrides]]
 module = [
   "scripts.train_mnist_resnet18",
+  "scripts.worker",
+  "scripts.rq_worker",
   "torch",
   "torch.*",
   "torchvision",
   "torchvision.*",
+  "redis",
+  "redis.*",
+  "rq",
+  "rq.*",
 ]
 ignore_missing_imports = true
 disallow_any_unimported = false
@@ -111,6 +119,8 @@ disallow_any_expr = false
 disallow_any_generics = false
 disallow_any_decorated = false
 disallow_any_explicit = false
+disallow_untyped_defs = false
+disallow_untyped_calls = false
 check_untyped_defs = false
 warn_return_any = false
 

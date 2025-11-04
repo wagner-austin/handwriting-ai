@@ -17,13 +17,16 @@ WORKDIR /app
 # Install Poetry
 RUN pip install --no-cache-dir poetry==1.8.3
 
+# Ensure Poetry venv binaries (uvicorn, rq, etc.) are on PATH
+ENV PATH="/app/.venv/bin:${PATH}"
+
 # Copy lockfiles first for better layer caching
 COPY pyproject.toml poetry.lock /app/
 
 # Copy the rest of the project (app src, configs, docs as needed)
 COPY src /app/src
 COPY config /app/config
-COPY scripts/prestart.py /app/scripts/prestart.py
+COPY scripts /app/scripts
 COPY seed /seed
 COPY README.md /app/README.md
 
