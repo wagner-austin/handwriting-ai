@@ -127,3 +127,58 @@ def test_progress_emitter_failure_swallowed(
         assert (out / "model.pt").exists()
     finally:
         set_progress_emitter(None)
+
+
+def test_progress_emitter_every_n_epochs(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    cfg = _cfg(tmp_path)
+    # Increase epochs and set cadence
+    cfg = TrainConfig(
+        data_root=cfg.data_root,
+        out_dir=cfg.out_dir,
+        model_id=cfg.model_id,
+        epochs=5,
+        batch_size=cfg.batch_size,
+        lr=cfg.lr,
+        weight_decay=cfg.weight_decay,
+        seed=cfg.seed,
+        device=cfg.device,
+        optim=cfg.optim,
+        scheduler=cfg.scheduler,
+        step_size=cfg.step_size,
+        gamma=cfg.gamma,
+        min_lr=cfg.min_lr,
+        patience=0,
+        min_delta=cfg.min_delta,
+        threads=0,
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        progress_every_epochs=2,
+    )
+    train_base = _TinyBase(6)
+    test_base = _TinyBase(3)
+
+    def _ok_train_epoch(
+        model: mt.TrainableModel,
+        train_loader: Iterable[tuple[Tensor, Tensor]],
+        device: torch.device,
+        optimizer: object,
+        ep: int,
+        ep_total: int,
+        total_batches: int,
+    ) -> float:
+        return 0.0
+
+    rec = _Rec()
+    monkeypatch.setattr(mt, "_train_epoch", _ok_train_epoch, raising=True)
+    set_progress_emitter(rec)
+    try:
+        out = mt.train_with_config(cfg, (train_base, test_base))
+        assert (out / "model.pt").exists()
+    finally:
+        set_progress_emitter(None)
+    # Expect emits at epochs 2, 4 and final 5 due to always emit last
+    epochs_seen = [e for (e, _, _) in rec.calls]
+    assert any(e == 2 for e in epochs_seen)
+    assert any(e == 4 for e in epochs_seen)
+    assert epochs_seen[-1] == 5
