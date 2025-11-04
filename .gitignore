@@ -40,3 +40,6 @@ Thumbs.db
 # Node (if present)
 node_modules/
 
+
+artifacts/
+
