@@ -7,7 +7,11 @@ name = "handwriting-ai"
 version = "0.1.0"
 description = "Handwriting AI service for MNIST digit inference (HTTP)."
 authors = ["Your Team <team@example.com>"]
-packages = [{ include = "handwriting_ai", from = "src" }]
+packages = [
+  { include = "handwriting_ai", from = "src" },
+  # Include runtime worker scripts as a package for console entry import
+  { include = "scripts" },
+]
 readme = "README.md"
 
 [[tool.poetry.source]]
