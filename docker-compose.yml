@@ -15,6 +15,7 @@ services:
       - ./config:/app/config:ro
       - ./artifacts:/data/artifacts
       - ./logs:/data/logs
+      - ./models:/data/digits/models
     restart: unless-stopped
 
 volumes: {}
