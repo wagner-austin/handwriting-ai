@@ -13,7 +13,8 @@ from scripts.worker import _make_publisher_from_env, _real_run_training
 def _redis_from_url(url: str) -> object:  # pragma: no cover - runtime import only
     import redis
 
-    return redis.from_url(url, decode_responses=True)
+    # RQ stores binary (pickled) payloads; decode_responses must be False
+    return redis.from_url(url, decode_responses=False)
 
 
 @dataclass(frozen=True)
