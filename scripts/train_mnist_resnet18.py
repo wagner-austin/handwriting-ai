@@ -148,6 +148,25 @@ def _parse_args() -> tuple[TrainConfig, LogStyle]:
     ap.add_argument("--augment", action="store_true", default=defaults.augment)
     ap.add_argument("--aug-rotate", type=float, default=defaults.aug_rotate)
     ap.add_argument("--aug-translate", type=float, default=defaults.aug_translate)
+    # New augmentation knobs (optional; default-off)
+    ap.add_argument("--noise-prob", type=float, default=getattr(defaults, "noise_prob", 0.0))
+    ap.add_argument(
+        "--noise-salt-vs-pepper",
+        type=float,
+        default=getattr(defaults, "noise_salt_vs_pepper", 0.5),
+        help="Probability of salt (white) vs pepper (black) for noise",
+    )
+    ap.add_argument("--dots-prob", type=float, default=getattr(defaults, "dots_prob", 0.0))
+    ap.add_argument("--dots-count", type=int, default=getattr(defaults, "dots_count", 0))
+    ap.add_argument("--dots-size", type=int, default=getattr(defaults, "dots_size_px", 1))
+    ap.add_argument("--blur-sigma", type=float, default=getattr(defaults, "blur_sigma", 0.0))
+    ap.add_argument(
+        "--morph",
+        type=str,
+        choices=["none", "erode", "dilate"],
+        default=getattr(defaults, "morph", "none"),
+    )
+    ap.add_argument("--morph-kernel", type=int, default=getattr(defaults, "morph_kernel_px", 1))
     ap.add_argument(
         "--log-style",
         type=str,
@@ -177,6 +196,14 @@ def _parse_args() -> tuple[TrainConfig, LogStyle]:
         augment=bool(args.augment),
         aug_rotate=float(args.aug_rotate),
         aug_translate=float(args.aug_translate),
+        noise_prob=float(args.noise_prob),
+        noise_salt_vs_pepper=float(args.noise_salt_vs_pepper),
+        dots_prob=float(args.dots_prob),
+        dots_count=int(args.dots_count),
+        dots_size_px=int(args.dots_size),
+        blur_sigma=float(args.blur_sigma),
+        morph=str(args.morph),
+        morph_kernel_px=int(args.morph_kernel),
     )
     log_style: LogStyle = "auto"
     if isinstance(args.log_style, str) and args.log_style in {"json", "pretty", "auto"}:
