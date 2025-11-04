@@ -23,7 +23,7 @@ def test_apply_seed_if_missing(tmp_path: Path) -> None:
     _write_bytes(seed_root / mid / "model.pt", b"pt")
     _write_manifest(
         seed_root / mid / "manifest.json",
-        schema_version="v1",
+        schema_version="v1.1",
         model_id=mid,
         arch="resnet18",
         n_classes=10,
@@ -47,7 +47,7 @@ def test_apply_seed_if_newer_with_backup(tmp_path: Path) -> None:
     _write_bytes(model_dir / mid / "model.pt", b"old")
     _write_manifest(
         model_dir / mid / "manifest.json",
-        schema_version="v1",
+        schema_version="v1.1",
         model_id=mid,
         arch="resnet18",
         n_classes=10,
@@ -61,7 +61,7 @@ def test_apply_seed_if_newer_with_backup(tmp_path: Path) -> None:
     _write_bytes(seed_root / mid / "model.pt", b"new")
     _write_manifest(
         seed_root / mid / "manifest.json",
-        schema_version="v1",
+        schema_version="v1.1",
         model_id=mid,
         arch="resnet18",
         n_classes=10,

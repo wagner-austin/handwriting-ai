@@ -51,7 +51,7 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
         d.mkdir(parents=True, exist_ok=True)
         (d / "model.pt").write_bytes(b"pt")
         manifest = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": cfg.model_id,
             "arch": "resnet18",
             "n_classes": 10,

@@ -28,7 +28,7 @@ def test_reload_if_changed_detects_updates() -> None:
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,
@@ -72,7 +72,7 @@ def test_reload_if_changed_branches(monkeypatch: pytest.MonkeyPatch) -> None:
         active_dir = model_dir / "a"
         active_dir.mkdir(parents=True, exist_ok=True)
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": "a",
             "arch": "resnet18",
             "n_classes": 10,
@@ -115,7 +115,7 @@ def test_try_load_active_stat_oserror_sets_last_none(monkeypatch: pytest.MonkeyP
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,

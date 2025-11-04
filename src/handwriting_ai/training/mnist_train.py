@@ -332,7 +332,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     manifest_unique = model_dir / f"manifest-{run_id}.json"
     torch.save(sd, model_unique.as_posix())
     manifest = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": cfg.model_id,
         "arch": "resnet18",
         "n_classes": MNIST_N_CLASSES,

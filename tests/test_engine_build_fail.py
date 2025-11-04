@@ -32,7 +32,7 @@ def test_try_load_active_model_build_failure_is_logged_and_not_ready(
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,

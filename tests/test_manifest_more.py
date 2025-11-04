@@ -21,7 +21,7 @@ def test_manifest_from_json_non_object_raises() -> None:
 
 def test_manifest_invalid_created_at_raises() -> None:
     d: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "m",
         "arch": "resnet18",
         "n_classes": 10,
@@ -37,7 +37,7 @@ def test_manifest_invalid_created_at_raises() -> None:
 
 def test_manifest_invalid_n_classes_bound_raises() -> None:
     d: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "m",
         "arch": "resnet18",
         "n_classes": 1,
@@ -53,7 +53,7 @@ def test_manifest_invalid_n_classes_bound_raises() -> None:
 
 def test_manifest_invalid_val_acc_raises() -> None:
     d: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "m",
         "arch": "resnet18",
         "n_classes": 10,
@@ -69,7 +69,7 @@ def test_manifest_invalid_val_acc_raises() -> None:
 
 def test_manifest_invalid_temperature_raises() -> None:
     d: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "m",
         "arch": "resnet18",
         "n_classes": 10,

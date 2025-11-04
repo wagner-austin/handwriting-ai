@@ -39,7 +39,7 @@ def test_admin_upload_reload_failure_is_logged_but_succeeds(tmp_path: Path) -> N
     client = TestClient(app)
 
     man = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": s.digits.active_model,
         "arch": "resnet18",
         "n_classes": 10,

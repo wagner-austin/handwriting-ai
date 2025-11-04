@@ -24,7 +24,7 @@ def test_background_reloader_picks_up_changes() -> None:
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,

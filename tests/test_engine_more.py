@@ -21,7 +21,7 @@ def test_load_state_dict_file_nested_and_flat(tmp_path: Path) -> None:
         active_dir = tmp_path / active
         active_dir.mkdir(parents=True, exist_ok=True)
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,

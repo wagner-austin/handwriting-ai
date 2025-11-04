@@ -9,7 +9,7 @@ def test_manifest_from_json_positive() -> None:
     now = datetime.now(UTC).isoformat()
     js = (
         "{"
-        + '"schema_version":"v1",'
+        + '"schema_version":"v1.1",'
         + '"model_id":"m",'
         + '"arch":"resnet18",'
         + '"n_classes":10,'

@@ -51,7 +51,7 @@ def test_try_load_active_manifest_and_state_load_failures() -> None:
 
         # 3) State dict load failure → state_dict_load_failed
         good_manifest = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,
@@ -83,7 +83,7 @@ def test_invalid_state_dict_variants_logged_and_not_ready() -> None:
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,
@@ -152,7 +152,7 @@ def test_hot_reload_concurrent_access() -> None:
         active_dir.mkdir(parents=True, exist_ok=True)
 
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,

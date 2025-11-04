@@ -7,7 +7,7 @@ from handwriting_ai.inference.manifest import ModelManifest
 
 def test_manifest_from_dict_valid() -> None:
     d: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "mnist_resnet18_v1",
         "arch": "resnet18_cifar",
         "n_classes": 10,
@@ -24,7 +24,7 @@ def test_manifest_from_dict_valid() -> None:
 
 def test_manifest_from_dict_missing_raises() -> None:
     bad: dict[str, object] = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         # missing model_id
         "arch": "resnet18_cifar",
         "n_classes": 10,

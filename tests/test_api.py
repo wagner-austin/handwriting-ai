@@ -124,7 +124,7 @@ def test_readyz_stays_not_ready_when_manifest_mismatch() -> None:
         active_dir.mkdir(parents=True, exist_ok=True)
         # Write a manifest with mismatched preprocess hash
         manifest = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": 10,
@@ -165,7 +165,7 @@ def test_models_active_and_read_with_artifact() -> None:
 
         # Write manifest matching preprocess signature
         man = {
-            "schema_version": "v1",
+            "schema_version": "v1.1",
             "model_id": active,
             "arch": "resnet18",
             "n_classes": n_classes,

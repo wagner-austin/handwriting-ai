@@ -49,7 +49,7 @@ def test_admin_upload_writes_and_reloads(tmp_path: Path) -> None:
     client = TestClient(app)
 
     man = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": s.digits.active_model,
         "arch": "resnet18",
         "n_classes": 10,
@@ -102,7 +102,7 @@ def test_admin_upload_sig_mismatch(tmp_path: Path) -> None:
     client = TestClient(app)
     # Build manifest with wrong preprocess hash
     man = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": s.digits.active_model,
         "arch": "resnet18",
         "n_classes": 10,
@@ -130,7 +130,7 @@ def test_admin_upload_model_id_mismatch(tmp_path: Path) -> None:
     app = create_app(s, engine_provider=lambda: _FakeEngine(s))
     client = TestClient(app)
     man = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": "other_model",
         "arch": "resnet18",
         "n_classes": 10,
@@ -159,7 +159,7 @@ def test_admin_upload_no_activate_path(tmp_path: Path) -> None:
     app = create_app(s, engine_provider=lambda: eng)
     client = TestClient(app)
     man = {
-        "schema_version": "v1",
+        "schema_version": "v1.1",
         "model_id": s.digits.active_model,
         "arch": "resnet18",
         "n_classes": 10,

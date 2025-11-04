@@ -37,7 +37,7 @@ class ModelManifest:
 
     @staticmethod
     def from_dict(d: dict[str, object]) -> ModelManifest:
-        allowed_schema_versions: Final[tuple[str, ...]] = ("v1", "v1.1")
+        allowed_schema_versions: Final[tuple[str, ...]] = ("v1.1",)
         created_at_str = str(d["created_at"]) if "created_at" in d else ""
         created = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
         n_classes = int(str(d.get("n_classes", 10)))
