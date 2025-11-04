@@ -82,7 +82,7 @@ check_untyped_defs = true
 no_implicit_reexport = true
 show_error_codes = true
 pretty = true
-files = ["src", "tests", "scripts/train_mnist_resnet18.py"]
+files = ["src", "tests", "scripts/train_mnist_resnet18.py", "scripts/prestart.py"]
 plugins = ["pydantic.mypy"]
 
 # Narrow, explicit relaxations for third‑party integration boundaries to avoid false Any from
@@ -113,4 +113,5 @@ disallow_any_decorated = false
 disallow_any_explicit = false
 check_untyped_defs = false
 warn_return_any = false
+
 
