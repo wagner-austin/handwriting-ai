@@ -4,6 +4,7 @@ import json
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Final
 
 
 @dataclass(frozen=True)
@@ -36,6 +37,7 @@ class ModelManifest:
 
     @staticmethod
     def from_dict(d: dict[str, object]) -> ModelManifest:
+        allowed_schema_versions: Final[tuple[str, ...]] = ("v1", "v1.1")
         created_at_str = str(d["created_at"]) if "created_at" in d else ""
         created = datetime.fromisoformat(created_at_str) if created_at_str else datetime.now()
         n_classes = int(str(d.get("n_classes", 10)))
@@ -54,6 +56,8 @@ class ModelManifest:
         preprocess_hash = str(d.get("preprocess_hash", "")).strip()
         if not schema_version or not model_id or not arch or not version or not preprocess_hash:
             raise ValueError("manifest is missing required fields")
+        if schema_version not in allowed_schema_versions:
+            raise ValueError("unsupported manifest schema version")
         return ModelManifest(
             schema_version=schema_version,
             model_id=model_id,

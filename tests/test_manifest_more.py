@@ -99,6 +99,22 @@ def test_manifest_required_fields_missing_schema_raises() -> None:
         _ = ModelManifest.from_dict(d)
 
 
+def test_manifest_unsupported_schema_version_raises() -> None:
+    d: dict[str, object] = {
+        "schema_version": "v9",
+        "model_id": "m",
+        "arch": "resnet18",
+        "n_classes": 10,
+        "version": "1.0.0",
+        "created_at": datetime.now(UTC).isoformat(),
+        "preprocess_hash": "abc",
+        "val_acc": 0.5,
+        "temperature": 1.0,
+    }
+    with pytest.raises(ValueError):
+        _ = ModelManifest.from_dict(d)
+
+
 def test_manifest_from_path_invalid_json_raises() -> None:
     with tempfile.TemporaryDirectory() as td:
         p = Path(td) / "manifest.json"
