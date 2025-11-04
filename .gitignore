@@ -43,3 +43,7 @@ node_modules/
 
 artifacts/
 
+# Windows reserved device file sometimes appears as untracked on Windows
+# Ignore to avoid false-positive NUL entry in `git status`.
+NUL
+
