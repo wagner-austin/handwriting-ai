@@ -11,6 +11,7 @@ from torch.optim.optimizer import Optimizer
 from torch.utils.data import DataLoader, Dataset
 
 from handwriting_ai.training import mnist_train as mt
+from handwriting_ai.training.dataset import PreprocessDataset
 from handwriting_ai.training.mnist_train import (
     TrainConfig,
     _apply_affine,
@@ -18,7 +19,6 @@ from handwriting_ai.training.mnist_train import (
     _build_optimizer_and_scheduler,
     _ensure_image,
     _evaluate,
-    _PreprocessDataset,
     _set_seed,
     _train_epoch,
     make_loaders,
@@ -91,7 +91,29 @@ def test_build_model_and_evaluate_smoke() -> None:
     assert tuple(y.shape) == (1, 10)
     # Evaluate on tiny loader
     base = _TinyBase(2)
-    ds = _PreprocessDataset(base)
+    cfg0 = TrainConfig(
+        data_root=Path("."),
+        out_dir=Path("."),
+        model_id="m",
+        epochs=1,
+        batch_size=2,
+        lr=1e-3,
+        weight_decay=1e-2,
+        seed=0,
+        device="cpu",
+        optim="adamw",
+        scheduler="none",
+        step_size=1,
+        gamma=0.5,
+        min_lr=1e-5,
+        patience=0,
+        min_delta=5e-4,
+        threads=0,
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+    )
+    ds = PreprocessDataset(base, cfg0)
     loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(ds, batch_size=2, shuffle=False)
     acc = _evaluate(model, loader, torch.device("cpu"))
     assert 0.0 <= acc <= 1.0
@@ -103,7 +125,7 @@ def test_make_loaders_and_train_epoch_augment(tmp_path: Path) -> None:
     train_base = _TinyBase(4)
     test_base = _TinyBase(2)
     ds, train_loader, _ = make_loaders(train_base, test_base, cfg)
-    assert isinstance(ds, _PreprocessDataset)
+    assert isinstance(ds, PreprocessDataset)
     # training DataLoader yields Tensor labels
     model = _build_model()
     opt, _ = _build_optimizer_and_scheduler(model, cfg)

@@ -7,12 +7,12 @@ import torch
 from PIL import Image
 from torch.utils.data import DataLoader, Dataset
 
+from handwriting_ai.training.dataset import PreprocessDataset
 from handwriting_ai.training.mnist_train import (
     TrainConfig,
     _build_model,
     _build_optimizer_and_scheduler,
     _configure_threads,
-    _PreprocessDataset,
     _train_epoch,
 )
 
@@ -78,7 +78,7 @@ def test_optimizer_scheduler_variants() -> None:
 
 def test_train_epoch_smoke_with_fake_data() -> None:
     base = _TinyBase(4)
-    ds = _PreprocessDataset(base)
+    ds = PreprocessDataset(base, _base_cfg())
     loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] = DataLoader(
         ds, batch_size=4, shuffle=False
     )
@@ -101,7 +101,8 @@ def test_train_epoch_smoke_with_fake_data() -> None:
 
 def test_augment_flag_yields_valid_sample() -> None:
     base = _TinyBase(1)
-    ds = _PreprocessDataset(base, augment=True, aug_rotate=5.0, aug_translate=0.1)
+    cfg = replace(_base_cfg(), augment=True, aug_rotate=5.0, aug_translate=0.1)
+    ds = PreprocessDataset(base, cfg)
     x, y = ds[0]
     assert list(x.shape) == [1, 28, 28]
     assert 0 <= int(y) <= 9
