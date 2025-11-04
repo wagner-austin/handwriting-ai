@@ -99,6 +99,9 @@ omit = ["tests/*"]
 precision = 2
 show_missing = true
 
+[tool.poetry.scripts]
+handai-rq-worker = "scripts.rq_worker:main"
+
 [[tool.mypy.overrides]]
 module = [
   "scripts.train_mnist_resnet18",
