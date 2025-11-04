@@ -15,10 +15,6 @@ import torch.nn.functional as F  # noqa: N812
 from PIL import Image
 from torch import Tensor
 from torch.nn.parameter import Parameter
-from torch.optim.adam import Adam
-from torch.optim.adamw import AdamW
-from torch.optim.lr_scheduler import CosineAnnealingLR, StepLR
-from torch.optim.sgd import SGD
 from torch.utils.data import DataLoader, Dataset
 
 from handwriting_ai.inference.engine import (
@@ -28,7 +24,11 @@ from handwriting_ai.inference.engine import (
     _build_model as _engine_build_model,
 )
 from handwriting_ai.logging import get_logger, init_logging
-from handwriting_ai.preprocess import PreprocessOptions, preprocess_signature, run_preprocess
+from handwriting_ai.preprocess import preprocess_signature
+
+from .augment import apply_affine as _apply_affine_impl
+from .dataset import make_loaders as _make_loaders_impl
+from .optim import build_optimizer_and_scheduler as _build_optimizer_and_scheduler_impl
 
 
 class TrainableModel(TorchModel, Protocol):
@@ -62,6 +62,15 @@ class TrainConfig:
     augment: bool
     aug_rotate: float
     aug_translate: float
+    # Optional augmentation modifiers (default-off)
+    noise_prob: float = 0.0
+    noise_salt_vs_pepper: float = 0.5
+    dots_prob: float = 0.0
+    dots_count: int = 0
+    dots_size_px: int = 1
+    blur_sigma: float = 0.0
+    morph: str = "none"
+    morph_kernel_px: int = 1
 
 
 class MNISTLike(Protocol):
@@ -69,53 +78,8 @@ class MNISTLike(Protocol):
     def __getitem__(self, idx: int) -> tuple[Image.Image, int]: ...
 
 
-class _PreprocessDataset(Dataset[tuple[Tensor, Tensor]]):
-    """MNIST dataset applying the service preprocess to prevent drift."""
-
-    def __init__(
-        self,
-        base: MNISTLike,
-        augment: bool = False,
-        aug_rotate: float = 0.0,
-        aug_translate: float = 0.0,
-    ) -> None:
-        self._base = base
-        self._opts = PreprocessOptions(
-            invert=None,
-            center=True,
-            visualize=False,
-            visualize_max_kb=0,
-        )
-        self._augment = bool(augment)
-        self._aug_rotate = float(aug_rotate)
-        self._aug_translate = float(aug_translate)
-
-    def __len__(self) -> int:
-        return len(self._base)
-
-    def __getitem__(self, idx: int) -> tuple[Tensor, Tensor]:
-        img_raw, label = self._base[idx]
-        img = _ensure_image(img_raw)
-        img2 = _apply_affine(img, self._aug_rotate, self._aug_translate) if self._augment else img
-        out = run_preprocess(img2, self._opts)
-        t = out.tensor.squeeze(0)
-        return t, torch.tensor(int(label), dtype=torch.long)
-
-
 def _apply_affine(img: Image.Image, deg_max: float, tx_frac: float) -> Image.Image:
-    import random
-
-    d = max(0.0, float(deg_max))
-    t = max(0.0, min(0.5, float(tx_frac)))
-    angle = random.uniform(-d, d)
-    dx = int(round(t * img.width))
-    dy = int(round(t * img.height))
-    tx = random.randint(-dx, dx)
-    ty = random.randint(-dy, dy)
-    rotated = img.rotate(angle, resample=Image.Resampling.BILINEAR, fillcolor=0)
-    translated = Image.new("L", rotated.size, 0)
-    translated.paste(rotated, (tx, ty))
-    return translated
+    return _apply_affine_impl(img, deg_max, tx_frac)
 
 
 def _ensure_image(obj: object) -> Image.Image:
@@ -160,6 +124,10 @@ def _configure_threads(cfg: TrainConfig) -> None:
 
 
 if TYPE_CHECKING:
+    from torch.optim.optimizer import Optimizer
+
+
+if TYPE_CHECKING:
     from torch.optim.lr_scheduler import LRScheduler
     from torch.optim.optimizer import Optimizer
 
@@ -167,23 +135,7 @@ if TYPE_CHECKING:
 def _build_optimizer_and_scheduler(
     model: TrainableModel, cfg: TrainConfig
 ) -> tuple[Optimizer, LRScheduler | None]:
-    if cfg.optim == "sgd":
-        optimizer: Optimizer = SGD(
-            model.parameters(), lr=cfg.lr, momentum=0.9, weight_decay=cfg.weight_decay
-        )
-    elif cfg.optim == "adam":
-        optimizer = Adam(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-    else:
-        optimizer = AdamW(model.parameters(), lr=cfg.lr, weight_decay=cfg.weight_decay)
-
-    if cfg.scheduler == "cosine":
-        scheduler: LRScheduler | None
-        scheduler = CosineAnnealingLR(optimizer, T_max=max(1, cfg.epochs), eta_min=cfg.min_lr)
-    elif cfg.scheduler == "step":
-        scheduler = StepLR(optimizer, step_size=max(1, cfg.step_size), gamma=cfg.gamma)
-    else:
-        scheduler = None
-    return optimizer, scheduler
+    return _build_optimizer_and_scheduler_impl(model, cfg)
 
 
 def make_loaders(
@@ -193,16 +145,7 @@ def make_loaders(
     DataLoader[tuple[Tensor, Tensor]],
     DataLoader[tuple[Tensor, Tensor]],
 ]:
-    train_ds: Dataset[tuple[Tensor, Tensor]] = _PreprocessDataset(
-        train_base, augment=cfg.augment, aug_rotate=cfg.aug_rotate, aug_translate=cfg.aug_translate
-    )
-    test_ds: Dataset[tuple[Tensor, Tensor]] = _PreprocessDataset(test_base)
-    train_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0
-    )
-    test_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
-        test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0
-    )
+    train_ds, train_loader, test_loader = _make_loaders_impl(train_base, test_base, cfg)
     return train_ds, train_loader, test_loader
 
 
@@ -306,6 +249,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
                 f"epoch_done idx={ep} train_loss={train_loss:.4f} "
                 f"val_acc={val_acc:.4f} time_s={dt:.1f}"
             )
+            _emit_progress(epoch=ep, total_epochs=cfg.epochs, val_acc=float(val_acc))
             if val_acc > best_val + float(cfg.min_delta):
                 best_val = float(val_acc)
                 best_sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
@@ -358,3 +302,25 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     shutil.copy2(manifest_unique, model_dir / "manifest.json")
     log.info(f"artifact_written_to={model_dir} run_id={run_id}")
     return model_dir
+
+
+class ProgressEmitter(Protocol):
+    def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None: ...
+
+
+_progress_emitter: ProgressEmitter | None = None
+
+
+def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
+    global _progress_emitter
+    _progress_emitter = emitter
+
+
+def _emit_progress(epoch: int, total_epochs: int, val_acc: float | None) -> None:
+    em = _progress_emitter
+    if em is None:
+        return
+    try:
+        em.emit(epoch=epoch, total_epochs=total_epochs, val_acc=val_acc)
+    except (RuntimeError, ValueError, TypeError):
+        logging.getLogger("handwriting_ai").debug("progress_emitter_failed")
