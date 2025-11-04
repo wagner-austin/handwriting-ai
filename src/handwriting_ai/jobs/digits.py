@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from handwriting_ai.inference.manifest import ModelManifest
-from handwriting_ai.training.mnist_train import TrainConfig
+from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
 
 DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
 
@@ -52,7 +52,22 @@ class DigitsTrainFailedEvent(TypedDict):
     message: str
 
 
-Event = DigitsTrainStartedEvent | DigitsTrainCompletedEvent | DigitsTrainFailedEvent
+class DigitsTrainProgressEvent(TypedDict):
+    type: Literal["progress"]
+    request_id: str
+    user_id: int
+    model_id: str
+    epoch: int
+    total_epochs: int
+    val_acc: float | None
+
+
+Event = (
+    DigitsTrainStartedEvent
+    | DigitsTrainCompletedEvent
+    | DigitsTrainFailedEvent
+    | DigitsTrainProgressEvent
+)
 
 
 def encode_event(event: Event) -> str:
@@ -152,6 +167,17 @@ def process_train_job(payload: dict[str, object]) -> None:
 
     try:
         cfg = _build_cfg(p)
+        # Bridge training progress to events via a DI-safe emitter
+        set_progress_emitter(
+            _ProgressEmitter(
+                publisher=ctx.publisher,
+                channel=ctx.channel,
+                request_id=p["request_id"],
+                user_id=p["user_id"],
+                model_id=p["model_id"],
+                total_epochs=p["epochs"],
+            )
+        )
         model_dir = _run_training(cfg)
         man = ModelManifest.from_path(model_dir / "manifest.json")
         completed: DigitsTrainCompletedEvent = {
@@ -166,6 +192,9 @@ def process_train_job(payload: dict[str, object]) -> None:
     except (OSError, RuntimeError, ValueError, TypeError):
         _emit_failed(payload, "system", "system error")
         raise
+    finally:
+        # Ensure emitter cleared to avoid cross-job leakage in long-lived workers
+        set_progress_emitter(None)
 
 
 def _make_context() -> _Context:
@@ -177,6 +206,39 @@ def _make_context() -> _Context:
 def _make_publisher() -> Publisher | None:
     # No-op by default; runtime may override via monkeypatching or custom wiring
     return None
+
+
+class _ProgressEmitter:
+    def __init__(
+        self,
+        *,
+        publisher: Publisher | None,
+        channel: str,
+        request_id: str,
+        user_id: int,
+        model_id: str,
+        total_epochs: int,
+    ) -> None:
+        self._publisher = publisher
+        self._channel = channel
+        self._req = request_id
+        self._uid = int(user_id)
+        self._mid = model_id
+        self._tot = int(total_epochs)
+
+    def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None:
+        # Prefer configured total epochs; fall back to provided
+        tot = self._tot if self._tot > 0 else int(total_epochs)
+        evt: DigitsTrainProgressEvent = {
+            "type": "progress",
+            "request_id": self._req,
+            "user_id": self._uid,
+            "model_id": self._mid,
+            "epoch": int(epoch),
+            "total_epochs": int(tot),
+            "val_acc": (float(val_acc) if isinstance(val_acc, float) else None),
+        }
+        _publish_event(self._publisher, self._channel, evt)
 
 
 def _as_int(v: object) -> int:
