@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import base64
 import io
+import logging
 import threading
 import time
 from collections.abc import Callable
 from typing import Annotated, Protocol
 
-from fastapi import Depends, FastAPI, File, Header, Request, UploadFile
+from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.params import Depends as DependsParamType
 from fastapi.responses import JSONResponse
 from PIL import Image, ImageFile, UnidentifiedImageError
@@ -16,6 +17,7 @@ from starlette.datastructures import FormData
 from ..config import Limits, Settings
 from ..errors import AppError, ErrorCode, new_error, status_for
 from ..inference.engine import InferenceEngine
+from ..inference.manifest import ModelManifest
 from ..logging import init_logging, log_event
 from ..middleware import RequestIdMiddleware, api_key_dependency
 from ..preprocess import PreprocessOptions, run_preprocess
@@ -24,6 +26,11 @@ from ..version import get_version
 from .schemas import PredictResponse
 
 ImageFile.LOAD_TRUNCATED_IMAGES = False
+
+# Defaults for admin upload endpoint parameters (satisfy Ruff B008)
+_form_model_id: str = Form(...)
+_form_activate: bool = Form(False)
+_file_required: UploadFile = File(...)
 
 
 def _setup_optional_reloader(
@@ -350,7 +357,8 @@ def create_app(
 
     _register_basic(app, engine)
     _register_models(app, engine)
-
+    adm_dep: DependsParamType = Depends(_api_key_dep)
+    _register_admin(app, engine, adm_dep, _provide_settings)
     # Route registrations and dependencies
     _register_read(app, _api_key_dep, _provide_engine, _provide_settings, _provide_limits)
 
@@ -360,9 +368,61 @@ def create_app(
     return app
 
 
-# Default ASGI app for uvicorn
-app = create_app()
-
-
 class _APIKeyDep(Protocol):
     def __call__(self, x_api_key: str | None) -> None: ...
+
+
+def _register_admin(
+    app: FastAPI,
+    engine: InferenceEngine,
+    dep_api_key: DependsParamType,
+    provide_settings: Callable[[], Settings],
+) -> None:
+    async def _upload_model(
+        model_id: str = _form_model_id,
+        activate: bool = _form_activate,
+        manifest: UploadFile = _file_required,
+        model: UploadFile = _file_required,
+    ) -> dict[str, object]:
+        man_bytes = await manifest.read()
+        try:
+            man = ModelManifest.from_json(man_bytes.decode("utf-8"))
+        except ValueError:
+            raise AppError(ErrorCode.preprocessing_failed, 400, "Invalid manifest") from None
+        from ..preprocess import preprocess_signature as _sig
+
+        if man.preprocess_hash != _sig():
+            raise AppError(ErrorCode.preprocessing_failed, 400, "Preprocess signature mismatch")
+        if man.model_id != model_id:
+            raise AppError(ErrorCode.preprocessing_failed, 400, "Model id mismatch")
+
+        s = provide_settings()
+        dest = s.digits.model_dir / model_id
+        dest.mkdir(parents=True, exist_ok=True)
+        model_bytes = await model.read()
+        (dest / "manifest.json").write_text(man_bytes.decode("utf-8"), encoding="utf-8")
+        (dest / "model.pt").write_bytes(model_bytes)
+
+        if activate and model_id == s.digits.active_model:
+            try:
+                engine.try_load_active()
+            except (RuntimeError, ValueError, OSError, TypeError):
+                logging.getLogger("handwriting_ai").info("admin_reload_failed")
+
+        out: dict[str, object] = {
+            "ok": True,
+            "model_id": model_id,
+            "run_id": man.created_at.isoformat(),
+        }
+        return out
+
+    app.add_api_route(
+        "/v1/admin/models/upload",
+        _upload_model,
+        methods=["POST"],
+        dependencies=[dep_api_key],
+    )
+
+
+# Default ASGI app for uvicorn
+app = create_app()
