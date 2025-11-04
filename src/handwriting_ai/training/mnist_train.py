@@ -77,6 +77,8 @@ class TrainConfig:
     blur_sigma: float = 0.0
     morph: str = "none"
     morph_kernel_px: int = 1
+    # Progress emission cadence (epochs). 1 = every epoch.
+    progress_every_epochs: int = 1
 
 
 class MNISTLike(Protocol):
@@ -215,7 +217,11 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
                 f"epoch_done idx={ep} train_loss={train_loss:.4f} "
                 f"val_acc={val_acc:.4f} time_s={dt:.1f}"
             )
-            _emit_progress(epoch=ep, total_epochs=cfg.epochs, val_acc=float(val_acc))
+            # Read attribute directly to keep typing precise
+            cadence = int(cfg.progress_every_epochs) if hasattr(cfg, "progress_every_epochs") else 1
+            cadence = max(1, cadence)
+            if (ep % cadence == 0) or (ep == cfg.epochs):
+                _emit_progress(epoch=ep, total_epochs=cfg.epochs, val_acc=float(val_acc))
             if val_acc > best_val + float(cfg.min_delta):
                 best_val = float(val_acc)
                 best_sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
