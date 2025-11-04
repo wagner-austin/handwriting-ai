@@ -48,6 +48,12 @@ def _start_worker(s: _RqSettings) -> int:
         ok = False
     if not ok:
         raise RuntimeError("Failed to connect to Redis")
+    # Startup diagnostic to confirm DI wiring and Redis mode
+    dec_attr = getattr(conn, "decode_responses", None)
+    dec = bool(dec_attr) if isinstance(dec_attr, bool) else False
+    logging.getLogger("handwriting_ai").info(
+        "digits_wiring_applied queue=%s decode_responses=%s", s.queue_name, bool(dec)
+    )
 
     # Lazily import rq only when actually running the worker, keeping tests light
     import rq as _rq
