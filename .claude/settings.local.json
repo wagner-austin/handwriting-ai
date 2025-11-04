@@ -4,7 +4,11 @@
       "Bash(make check:*)",
       "Bash(poetry show:*)",
       "Bash(docker logs:*)",
-      "Bash(curl:*)"
+      "Bash(curl:*)",
+      "Bash(dir:*)",
+      "Bash(NUL)",
+      "Bash(rq worker:*)",
+      "Bash(python:*)"
     ],
     "deny": [],
     "ask": []
