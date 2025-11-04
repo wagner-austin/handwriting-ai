@@ -176,6 +176,11 @@ def _http_post_multipart(
             conn.close()
 
 
+def _decode_preview(b: bytes, limit: int = 256) -> str:
+    s = b.decode("utf-8", errors="replace")
+    return s[:limit]
+
+
 def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
     url = _resolve_upload_url()
     api_key = _get_env_str("HANDWRITING_API_KEY")
@@ -214,7 +219,8 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
             return
         if attempt >= max(1, retries):
             logging.getLogger("handwriting_ai").info(
-                f"worker_upload_failed status={status} attempts={attempt}"
+                f"worker_upload_failed status={status} attempts={attempt} "
+                f"resp_preview={_decode_preview(resp)}"
             )
             if strict:
                 raise RuntimeError("artifact upload failed")
