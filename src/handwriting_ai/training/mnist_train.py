@@ -29,6 +29,8 @@ from .optim import build_optimizer_and_scheduler as _build_optimizer_and_schedul
 from .progress import (
     ProgressEmitter,
 )
+from .progress import emit_best as _emit_best
+from .progress import emit_epoch as _emit_epoch
 from .progress import (
     emit_progress as _emit_progress,
 )
@@ -217,6 +219,14 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
                 f"epoch_done idx={ep} train_loss={train_loss:.4f} "
                 f"val_acc={val_acc:.4f} time_s={dt:.1f}"
             )
+            # Emit epoch metrics to any registered epoch emitter
+            _emit_epoch(
+                epoch=ep,
+                total_epochs=cfg.epochs,
+                train_loss=float(train_loss),
+                val_acc=float(val_acc),
+                time_s=float(dt),
+            )
             # Read attribute directly to keep typing precise
             cadence = int(cfg.progress_every_epochs) if hasattr(cfg, "progress_every_epochs") else 1
             cadence = max(1, cadence)
@@ -227,6 +237,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
                 best_sd = {k: v.detach().cpu().clone() for k, v in model.state_dict().items()}
                 epochs_no_improve = 0
                 log.info(f"new_best_val_acc={best_val:.4f}")
+                _emit_best(epoch=ep, val_acc=float(best_val))
             else:
                 epochs_no_improve += 1
             if scheduler is not None:

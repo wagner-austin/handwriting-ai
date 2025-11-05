@@ -17,6 +17,7 @@ from torchvision.datasets import MNIST
 
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.config import Settings
+from handwriting_ai.events import digits as _ev
 from handwriting_ai.logging import init_logging
 from handwriting_ai.training.artifacts import prune_model_artifacts
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
@@ -225,6 +226,39 @@ def _decode_preview(b: bytes, limit: int = 256) -> str:
     return s[:limit]
 
 
+def _publish_upload_event(
+    model_id: str, *, status: int, model_bytes: int, manifest_bytes: int
+) -> None:
+    try:
+        pub = _make_publisher_from_env()
+        ch = _get_env_str("DIGITS_EVENTS_CHANNEL") or "digits:events"
+        if pub is None or ch is None:
+            return
+        ctx = _ev.Context(request_id="", user_id=0, model_id=model_id, run_id=None)
+        up = _ev.upload(
+            ctx,
+            status=int(status),
+            model_bytes=int(model_bytes),
+            manifest_bytes=int(manifest_bytes),
+        )
+        pub.publish(ch, _ev.encode_event(up))
+    except (OSError, ValueError, RuntimeError, TypeError):
+        logging.getLogger("handwriting_ai").debug("worker_upload_event_failed")
+
+
+def _publish_prune_event(model_id: str, *, deleted_count: int) -> None:
+    try:
+        pub = _make_publisher_from_env()
+        ch = _get_env_str("DIGITS_EVENTS_CHANNEL") or "digits:events"
+        if pub is None or ch is None:
+            return
+        ctx = _ev.Context(request_id="", user_id=0, model_id=model_id, run_id=None)
+        pr = _ev.prune(ctx, deleted_count=int(deleted_count))
+        pub.publish(ch, _ev.encode_event(pr))
+    except (OSError, ValueError, RuntimeError, TypeError):
+        logging.getLogger("handwriting_ai").debug("worker_prune_event_failed")
+
+
 def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
     url = _resolve_upload_url()
     api_key = _get_env_str("HANDWRITING_API_KEY")
@@ -265,6 +299,13 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
             logging.getLogger("handwriting_ai").info(
                 f"worker_upload_success status={status} bytes={len(resp)}"
             )
+            # Publish upload event (request_id unknown in this context)
+            _publish_upload_event(
+                model_id,
+                status=status,
+                model_bytes=len(model_bytes),
+                manifest_bytes=len(manifest_bytes),
+            )
             # Prune older training snapshots to keep volume usage bounded
             try:
                 s = Settings.load()
@@ -277,6 +318,7 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
                     logging.getLogger("handwriting_ai").info(
                         f"worker_prune_deleted count={len(deleted)}"
                     )
+                    _publish_prune_event(model_id, deleted_count=len(deleted))
             except (OSError, ValueError, TypeError):
                 logging.getLogger("handwriting_ai").info("worker_prune_failed")
             return

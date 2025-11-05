@@ -10,6 +10,8 @@ from torch.optim.optimizer import Optimizer
 
 from handwriting_ai.logging import get_logger
 
+from .progress import emit_batch as _emit_batch
+
 
 class _TrainableModel(Protocol):
     def train(self) -> object: ...  # pragma: no cover - typing only
@@ -80,5 +82,15 @@ def train_epoch(
                 f"batch={batch_idx+1}/{total_batches} "
                 f"batch_loss={float(loss.item()):.4f} batch_acc={batch_acc:.4f} "
                 f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f}"
+            )
+            _emit_batch(
+                epoch=ep,
+                total_epochs=ep_total,
+                batch=(batch_idx + 1),
+                total_batches=total_batches,
+                batch_loss=float(loss.item()),
+                batch_acc=batch_acc,
+                avg_loss=avg_loss,
+                samples_per_sec=ips,
             )
     return loss_sum / total if total > 0 else 0.0
