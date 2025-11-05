@@ -64,25 +64,16 @@ def new_error(code: ErrorCode, request_id: str, message: str | None = None) -> E
 
 
 def status_for(code: ErrorCode) -> int:
-    if code is ErrorCode.invalid_image:
-        return status.HTTP_400_BAD_REQUEST
-    if code is ErrorCode.unsupported_media_type:
-        return status.HTTP_415_UNSUPPORTED_MEDIA_TYPE
-    if code is ErrorCode.bad_dimensions:
-        return status.HTTP_400_BAD_REQUEST
-    if code is ErrorCode.too_large:
-        return status.HTTP_413_REQUEST_ENTITY_TOO_LARGE
-    if code is ErrorCode.preprocessing_failed:
-        return status.HTTP_400_BAD_REQUEST
-    if code is ErrorCode.timeout:
-        # Use 500 if internal timeout boundary triggered; endpoint may map differently.
-        return status.HTTP_504_GATEWAY_TIMEOUT
-    if code is ErrorCode.unauthorized:
-        return status.HTTP_401_UNAUTHORIZED
-    if code is ErrorCode.malformed_multipart:
-        return status.HTTP_400_BAD_REQUEST
-    if code is ErrorCode.service_not_ready:
-        return status.HTTP_503_SERVICE_UNAVAILABLE
-    if code is ErrorCode.invalid_model:
-        return status.HTTP_400_BAD_REQUEST
-    return status.HTTP_500_INTERNAL_SERVER_ERROR
+    mapping: dict[ErrorCode, int] = {
+        ErrorCode.invalid_image: status.HTTP_400_BAD_REQUEST,
+        ErrorCode.unsupported_media_type: status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+        ErrorCode.bad_dimensions: status.HTTP_400_BAD_REQUEST,
+        ErrorCode.too_large: status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+        ErrorCode.preprocessing_failed: status.HTTP_400_BAD_REQUEST,
+        ErrorCode.timeout: status.HTTP_504_GATEWAY_TIMEOUT,
+        ErrorCode.unauthorized: status.HTTP_401_UNAUTHORIZED,
+        ErrorCode.malformed_multipart: status.HTTP_400_BAD_REQUEST,
+        ErrorCode.service_not_ready: status.HTTP_503_SERVICE_UNAVAILABLE,
+        ErrorCode.invalid_model: status.HTTP_400_BAD_REQUEST,
+    }
+    return mapping.get(code, status.HTTP_500_INTERNAL_SERVER_ERROR)
