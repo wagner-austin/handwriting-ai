@@ -18,6 +18,7 @@ from torchvision.datasets import MNIST
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.config import Settings
 from handwriting_ai.logging import init_logging
+from handwriting_ai.training.artifacts import prune_model_artifacts
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
 
 _DEFAULT_REDIS_ENV: Final[str] = "REDIS_URL"
@@ -264,6 +265,20 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
             logging.getLogger("handwriting_ai").info(
                 f"worker_upload_success status={status} bytes={len(resp)}"
             )
+            # Prune older training snapshots to keep volume usage bounded
+            try:
+                s = Settings.load()
+                keep_runs = int(getattr(s.digits, "retention_keep_runs", 3))
+            except (RuntimeError, ValueError, TypeError):
+                keep_runs = 3
+            try:
+                deleted = prune_model_artifacts(model_dir, max(0, keep_runs))
+                if deleted:
+                    logging.getLogger("handwriting_ai").info(
+                        f"worker_prune_deleted count={len(deleted)}"
+                    )
+            except (OSError, ValueError, TypeError):
+                logging.getLogger("handwriting_ai").info("worker_prune_failed")
             return
         if attempt >= max(1, retries):
             logging.getLogger("handwriting_ai").info(

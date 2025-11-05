@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 import tomllib
 from dataclasses import dataclass, replace
@@ -28,6 +29,8 @@ class DigitsConfig:
     max_image_side_px: int = 1024
     predict_timeout_seconds: int = 5
     visualize_max_kb: int = 16
+    # Number of historical training runs to keep per model (unique snapshots)
+    retention_keep_runs: int = 3
 
 
 @dataclass(frozen=True)
@@ -125,7 +128,19 @@ def _load_digits_from_env() -> DigitsConfig:
         d = replace(d, predict_timeout_seconds=int(to))
     if vk is not None:
         d = replace(d, visualize_max_kb=int(vk))
-    return d
+    return _apply_digits_retention_from_env(d)
+
+
+def _apply_digits_retention_from_env(d: DigitsConfig) -> DigitsConfig:
+    rk = os.getenv("DIGITS__RETENTION_KEEP_RUNS")
+    if rk is None:
+        return d
+    try:
+        val = int(rk)
+    except ValueError:
+        logging.getLogger("handwriting_ai").info("invalid_digits_retention_keep_runs")
+        return d
+    return replace(d, retention_keep_runs=max(0, val))
 
 
 def _load_security_from_env() -> SecurityConfig:
@@ -172,6 +187,8 @@ def _merge_digits(base: DigitsConfig, data: dict[str, object]) -> DigitsConfig:
         out = replace(out, predict_timeout_seconds=int(str(data["predict_timeout_seconds"])))
     if "visualize_max_kb" in data:
         out = replace(out, visualize_max_kb=int(str(data["visualize_max_kb"])))
+    if "retention_keep_runs" in data:
+        out = replace(out, retention_keep_runs=max(0, int(str(data["retention_keep_runs"]))))
     return out
 
 
