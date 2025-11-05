@@ -15,6 +15,7 @@ import redis
 from torchvision.datasets import MNIST
 
 import handwriting_ai.jobs.digits as dj
+from handwriting_ai.config import Settings
 from handwriting_ai.logging import init_logging
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
 
@@ -78,6 +79,43 @@ def _make_publisher_from_env() -> dj.Publisher | None:
         return None
 
 
+def _resolve_training_paths(cfg: TrainConfig) -> TrainConfig:
+    """Resolve data and artifact paths from Settings; ensure dirs exist.
+
+    Falls back to the provided cfg paths if Settings loading fails.
+    """
+    try:
+        s = Settings.load()
+        resolved_data_root = (s.app.data_root / "mnist").resolve()
+        resolved_out_dir = (s.app.artifacts_root / "digits" / "models").resolve()
+        resolved_data_root.mkdir(parents=True, exist_ok=True)
+        resolved_out_dir.mkdir(parents=True, exist_ok=True)
+        return replace(cfg, data_root=resolved_data_root, out_dir=resolved_out_dir)
+    except (RuntimeError, OSError, ValueError, TypeError):
+        # Fallback to provided paths if Settings cannot be loaded in this environment
+        cfg.data_root.mkdir(parents=True, exist_ok=True)
+        cfg.out_dir.mkdir(parents=True, exist_ok=True)
+        return cfg
+
+
+def _apply_aug_defaults_if_needed(cfg: TrainConfig) -> TrainConfig:
+    """Inject robust augmentation defaults when enabled and unset by caller."""
+    if not cfg.augment:
+        return cfg
+    out = cfg
+    if out.noise_prob == 0.0:
+        out = replace(out, noise_prob=0.15)
+    if out.dots_prob == 0.0:
+        out = replace(out, dots_prob=0.20)
+    if out.dots_count == 0:
+        out = replace(out, dots_count=3)
+    if out.dots_size_px == 1:
+        out = replace(out, dots_size_px=2)
+    if int(getattr(out, "progress_every_epochs", 1)) < 1:
+        out = replace(out, progress_every_epochs=1)
+    return out
+
+
 def _real_run_training(_: TrainConfig) -> Path:
     cfg = _
     # Auto-size to container limits (no manual tunables required)
@@ -90,8 +128,11 @@ def _real_run_training(_: TrainConfig) -> Path:
     logging.getLogger("handwriting_ai").info(
         "train_auto_config threads=%s batch_size=%s", cfg.threads, cfg.batch_size
     )
+    # Resolve volume-aware paths and apply augmentation defaults (typed, DRY)
+    cfg = _resolve_training_paths(cfg)
+    cfg = _apply_aug_defaults_if_needed(cfg)
+
     data_root = cfg.data_root
-    data_root.mkdir(parents=True, exist_ok=True)
     # MNIST returns PIL Image and int labels; matches MNISTLike protocol expectations
     train_base = MNIST(root=data_root.as_posix(), train=True, download=True)
     test_base = MNIST(root=data_root.as_posix(), train=False, download=True)

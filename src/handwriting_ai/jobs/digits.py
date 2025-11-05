@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
+from handwriting_ai.config import Settings
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
 
@@ -93,8 +94,10 @@ def _publish_event(pub: Publisher | None, channel: str, event: Event) -> None:
 
 
 def _build_cfg(payload: DigitsTrainJobV1) -> TrainConfig:
-    data_root = Path("./data/mnist")
-    out_dir = Path("./artifacts/digits/models")
+    # Resolve paths via Settings to honor volume mounts and avoid drift.
+    s = Settings.load()
+    data_root = (s.app.data_root / "mnist").resolve()
+    out_dir = (s.app.artifacts_root / "digits" / "models").resolve()
     return TrainConfig(
         data_root=data_root,
         out_dir=out_dir,
