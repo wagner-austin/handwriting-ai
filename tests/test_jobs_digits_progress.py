@@ -91,10 +91,7 @@ def test_process_train_job_emits_progress(monkeypatch: pytest.MonkeyPatch, tmp_p
     dj.process_train_job(payload)
 
     msgs = [m for _, m in pub.sent]
-    assert any('"type":"started"' in m for m in msgs)
-    assert any('"type":"progress"' in m for m in msgs)
-    assert any('"type":"completed"' in m for m in msgs)
-    # Versioned events should also be present
+    # Only versioned events are emitted (no legacy)
     joined = "\n".join(msgs)
     assert "digits.train.started.v1" in joined
     assert "digits.train.epoch.v1" in joined

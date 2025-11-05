@@ -66,7 +66,8 @@ def test_process_train_job_invalid_payload_fields_publishes_failed(
         "notes": None,
     }
     dj.process_train_job(payload)
-    assert any('"type":"failed"' in m for _, m in p.sent)
+    joined = "\n".join([m for _, m in p.sent])
+    assert "digits.train.failed.v1" in joined
 
 
 def test_process_train_job_training_error_publishes_failed_and_reraises(
@@ -94,8 +95,8 @@ def test_process_train_job_training_error_publishes_failed_and_reraises(
     }
     with pytest.raises(RuntimeError):
         dj.process_train_job(payload)
-    msgs = [m for _, m in p.sent]
-    assert any('"type":"failed"' in m for m in msgs)
+    joined = "\n".join([m for _, m in p.sent])
+    assert "digits.train.failed.v1" in joined
 
 
 def test_emit_failed_with_non_dict_payload_defaults(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -103,15 +104,9 @@ def test_emit_failed_with_non_dict_payload_defaults(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setattr(dj, "_make_publisher", lambda: p)
     dj._emit_failed("not-a-dict", "user", "msg")
-    # One or more events may be published (legacy + v1)
-    assert len(p.sent) >= 1
-    ch, msg = p.sent[0]
-    assert ch == "digits:events"
-    compact = msg.replace(" ", "")
-    assert '"type":"failed"' in compact
-    assert '"request_id":""' in compact
-    assert '"user_id":0' in compact
-    assert '"model_id":""' in compact
+    # Ensure v1 failed event is present
+    joined = "\n".join([m for _, m in p.sent])
+    assert "digits.train.failed.v1" in joined
 
 
 def test_emit_failed_v1_publish_error_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:

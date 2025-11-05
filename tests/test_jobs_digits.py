@@ -93,7 +93,8 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
         "notes": None,
     }
     dj.process_train_job(payload)
-    # Should publish started and completed events
+    # Should publish v1 started and completed events
     msgs = [m for _, m in p.sent]
-    assert any('"type":"started"' in m for m in msgs)
-    assert any('"type":"completed"' in m for m in msgs)
+    joined = "\n".join(msgs)
+    assert "digits.train.started.v1" in joined
+    assert "digits.train.completed.v1" in joined

@@ -177,15 +177,7 @@ def process_train_job(payload: dict[str, object]) -> None:
 
     ctx = _make_context()
 
-    started: DigitsTrainStartedEvent = {
-        "type": "started",
-        "request_id": p["request_id"],
-        "user_id": p["user_id"],
-        "model_id": p["model_id"],
-        "total_epochs": p["epochs"],
-    }
-    _publish_event(ctx.publisher, ctx.channel, started)
-    # Also publish versioned started event
+    # Publish versioned started event (no legacy fallback)
     _ctx = ev.Context(
         request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
     )
@@ -229,16 +221,7 @@ def process_train_job(payload: dict[str, object]) -> None:
                 ctx.publisher.publish(ctx.channel, ev.encode_event(_art))
         except (OSError, ValueError):
             logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
-        completed: DigitsTrainCompletedEvent = {
-            "type": "completed",
-            "request_id": p["request_id"],
-            "user_id": p["user_id"],
-            "model_id": p["model_id"],
-            "run_id": man.created_at.isoformat(),
-            "val_acc": float(man.val_acc),
-        }
-        _publish_event(ctx.publisher, ctx.channel, completed)
-        # Versioned completed
+        # Versioned completed (no legacy fallback)
         try:
             if ctx.publisher is not None:
                 _comp = ev.completed(
@@ -292,38 +275,8 @@ class _ProgressEmitter:
         self._run: str | None = None
 
     def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None:
-        # Prefer configured total epochs; fall back to provided
-        tot = self._tot if self._tot > 0 else int(total_epochs)
-        evt: DigitsTrainProgressEvent = {
-            "type": "progress",
-            "request_id": self._req,
-            "user_id": self._uid,
-            "model_id": self._mid,
-            "epoch": int(epoch),
-            "total_epochs": int(tot),
-            "val_acc": (float(val_acc) if isinstance(val_acc, float) else None),
-        }
-        _publish_event(self._publisher, self._channel, evt)
-        # Also publish versioned epoch summary with available fields
-        if isinstance(val_acc, float):
-            try:
-                if self._publisher is not None:
-                    _e = ev.epoch(
-                        ev.Context(
-                            request_id=self._req,
-                            user_id=self._uid,
-                            model_id=self._mid,
-                            run_id=self._run,
-                        ),
-                        epoch=int(epoch),
-                        total_epochs=int(tot),
-                        train_loss=0.0,
-                        val_acc=float(val_acc),
-                        time_s=0.0,
-                    )
-                    self._publisher.publish(self._channel, ev.encode_event(_e))
-            except (OSError, ValueError):
-                logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        # No legacy progress event; epoch.v1 is emitted directly from training loop
+        _ = (total_epochs, val_acc)
 
     def set_run_id(self, run_id: str) -> None:
         self._run = run_id
@@ -446,16 +399,7 @@ def _emit_failed(
             logging.getLogger("handwriting_ai").debug("digits_job_user_id_invalid")
             uid = 0
         mid = str(payload.get("model_id", ""))
-    failed: DigitsTrainFailedEvent = {
-        "type": "failed",
-        "request_id": req,
-        "user_id": uid,
-        "model_id": mid,
-        "error_kind": kind,
-        "message": msg,
-    }
-    _publish_event(ctx.publisher, ctx.channel, failed)
-    # Versioned failed
+    # Versioned failed (no legacy fallback)
     try:
         if ctx.publisher is not None:
             _f = ev.failed(
