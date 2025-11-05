@@ -46,6 +46,10 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setattr(dj, "_make_publisher", lambda: p)
 
+    # Ensure job builder resolves paths under tmp, not /data
+    monkeypatch.setenv("APP__DATA_ROOT", str(tmp_path / "data"))
+    monkeypatch.setenv("APP__ARTIFACTS_ROOT", str(tmp_path / "artifacts"))
+
     def _fake_run(cfg: TrainConfig) -> Path:  # create tiny artifact dir
         d = cfg.out_dir / cfg.model_id
         d.mkdir(parents=True, exist_ok=True)
