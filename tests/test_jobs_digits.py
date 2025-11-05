@@ -46,9 +46,20 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
     monkeypatch.setenv("REDIS_URL", "")
     monkeypatch.setattr(dj, "_make_publisher", lambda: p)
 
-    # Ensure job builder resolves paths under tmp, not /data
-    monkeypatch.setenv("APP__DATA_ROOT", str(tmp_path / "data"))
-    monkeypatch.setenv("APP__ARTIFACTS_ROOT", str(tmp_path / "artifacts"))
+    # Ensure job builder resolves paths under tmp, not /data, by monkeypatching settings provider
+    from handwriting_ai.config import AppConfig, DigitsConfig, SecurityConfig, Settings
+
+    def _load_settings() -> Settings:
+        app = AppConfig(
+            data_root=tmp_path / "data",
+            artifacts_root=tmp_path / "artifacts",
+            logs_root=tmp_path / "logs",
+            threads=0,
+            port=8081,
+        )
+        return Settings(app=app, digits=DigitsConfig(), security=SecurityConfig())
+
+    monkeypatch.setattr(dj, "_load_settings", staticmethod(_load_settings))
 
     def _fake_run(cfg: TrainConfig) -> Path:  # create tiny artifact dir
         d = cfg.out_dir / cfg.model_id

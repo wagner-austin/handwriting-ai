@@ -93,9 +93,17 @@ def _publish_event(pub: Publisher | None, channel: str, event: Event) -> None:
         logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
 
 
+def _load_settings() -> Settings:
+    """Provider for Settings; tests may monkeypatch this for isolation.
+
+    Keeping this indirection avoids hard ties to TOML/env precedence in tests.
+    """
+    return Settings.load()
+
+
 def _build_cfg(payload: DigitsTrainJobV1) -> TrainConfig:
     # Resolve paths via Settings to honor volume mounts and avoid drift.
-    s = Settings.load()
+    s = _load_settings()
     data_root = (s.app.data_root / "mnist").resolve()
     out_dir = (s.app.artifacts_root / "digits" / "models").resolve()
     return TrainConfig(
