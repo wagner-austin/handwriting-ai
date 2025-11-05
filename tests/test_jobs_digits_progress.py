@@ -34,6 +34,11 @@ class _TinyBase:
         return img, idx % 10
 
 
+class _BadPub:
+    def publish(self, channel: str, message: str) -> int:
+        raise OSError("fail")
+
+
 def test_process_train_job_emits_progress(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     pub = _Pub()
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
@@ -89,3 +94,62 @@ def test_process_train_job_emits_progress(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert any('"type":"started"' in m for m in msgs)
     assert any('"type":"progress"' in m for m in msgs)
     assert any('"type":"completed"' in m for m in msgs)
+    # Versioned events should also be present
+    joined = "\n".join(msgs)
+    assert "digits.train.started.v1" in joined
+    assert "digits.train.epoch.v1" in joined
+    assert "digits.train.completed.v1" in joined
+    assert "digits.train.artifact.v1" in joined
+
+
+def test_process_train_job_emitters_with_bad_publisher(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Use a bad publisher to exercise error paths inside the emitters
+    monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
+    monkeypatch.setattr(dj, "_make_publisher", lambda: _BadPub())
+
+    def _realish(cfg: TrainConfig) -> Path:
+        train_base = _TinyBase(2)
+        test_base = _TinyBase(1)
+        cfg2 = TrainConfig(
+            data_root=tmp_path / "data",
+            out_dir=tmp_path / "out",
+            model_id=cfg.model_id,
+            epochs=1,
+            batch_size=1,
+            lr=cfg.lr,
+            weight_decay=cfg.weight_decay,
+            seed=cfg.seed,
+            device=cfg.device,
+            optim=cfg.optim,
+            scheduler="none",
+            step_size=1,
+            gamma=cfg.gamma,
+            min_lr=cfg.min_lr,
+            patience=0,
+            min_delta=cfg.min_delta,
+            threads=0,
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+        )
+        return mt.train_with_config(cfg2, (train_base, test_base))
+
+    monkeypatch.setattr(dj, "_run_training", _realish)
+
+    payload: dict[str, object] = {
+        "type": "digits.train.v1",
+        "request_id": "r1",
+        "user_id": 9,
+        "model_id": "m1",
+        "epochs": 1,
+        "batch_size": 1,
+        "lr": 0.001,
+        "seed": 3,
+        "augment": False,
+        "notes": None,
+    }
+
+    # Should complete without raising despite publisher failures inside emitters
+    dj.process_train_job(payload)

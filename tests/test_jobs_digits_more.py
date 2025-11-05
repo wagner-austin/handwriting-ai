@@ -103,7 +103,8 @@ def test_emit_failed_with_non_dict_payload_defaults(monkeypatch: pytest.MonkeyPa
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setattr(dj, "_make_publisher", lambda: p)
     dj._emit_failed("not-a-dict", "user", "msg")
-    assert len(p.sent) == 1
+    # One or more events may be published (legacy + v1)
+    assert len(p.sent) >= 1
     ch, msg = p.sent[0]
     assert ch == "digits:events"
     compact = msg.replace(" ", "")
@@ -111,6 +112,57 @@ def test_emit_failed_with_non_dict_payload_defaults(monkeypatch: pytest.MonkeyPa
     assert '"request_id":""' in compact
     assert '"user_id":0' in compact
     assert '"model_id":""' in compact
+
+
+def test_emit_failed_v1_publish_error_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Ensure the v1 failed publish error path is covered
+    monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
+    monkeypatch.setattr(dj, "_make_publisher", lambda: _BadPub())
+    dj._emit_failed("not-a-dict", "user", "msg")
+
+
+def test_versioned_publish_errors_swallowed(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # Use a bad publisher to trigger the try/except branches around v1 event publishing
+    monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
+    monkeypatch.setattr(dj, "_make_publisher", lambda: _BadPub())
+
+    def _fake_run(cfg: TrainConfig) -> Path:
+        d = tmp_path / cfg.model_id
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "model.pt").write_bytes(b"pt")
+        manifest = {
+            "schema_version": "v1.1",
+            "model_id": cfg.model_id,
+            "arch": "resnet18",
+            "n_classes": 10,
+            "version": "1.0.0",
+            "created_at": "2025-01-01T00:00:00+00:00",
+            "preprocess_hash": "h",
+            "val_acc": 0.9,
+            "temperature": 1.0,
+        }
+        (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        return d
+
+    import json
+
+    monkeypatch.setattr(dj, "_run_training", _fake_run)
+    payload: dict[str, object] = {
+        "type": "digits.train.v1",
+        "request_id": "r1",
+        "user_id": 1,
+        "model_id": "m1",
+        "epochs": 1,
+        "batch_size": 1,
+        "lr": 0.001,
+        "seed": 1,
+        "augment": False,
+        "notes": None,
+    }
+    # Should not raise despite publisher errors
+    dj.process_train_job(payload)
 
 
 def test_run_training_default_raises(tmp_path: Path) -> None:

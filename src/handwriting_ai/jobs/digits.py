@@ -8,8 +8,18 @@ from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict
 
 from handwriting_ai.config import Settings
+from handwriting_ai.events import digits as ev
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
+from handwriting_ai.training.progress import (
+    set_batch_emitter as _set_batch_emitter,
+)
+from handwriting_ai.training.progress import (
+    set_best_emitter as _set_best_emitter,
+)
+from handwriting_ai.training.progress import (
+    set_epoch_emitter as _set_epoch_emitter,
+)
 
 DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
 
@@ -175,22 +185,50 @@ def process_train_job(payload: dict[str, object]) -> None:
         "total_epochs": p["epochs"],
     }
     _publish_event(ctx.publisher, ctx.channel, started)
+    # Also publish versioned started event
+    _ctx = ev.Context(
+        request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
+    )
+    _started_v1 = ev.started(_ctx, total_epochs=p["epochs"])
+    try:
+        if ctx.publisher is not None:
+            ctx.publisher.publish(ctx.channel, ev.encode_event(_started_v1))
+    except (OSError, ValueError):
+        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
 
     try:
         cfg = _build_cfg(p)
         # Bridge training progress to events via a DI-safe emitter
-        set_progress_emitter(
-            _ProgressEmitter(
-                publisher=ctx.publisher,
-                channel=ctx.channel,
-                request_id=p["request_id"],
-                user_id=p["user_id"],
-                model_id=p["model_id"],
-                total_epochs=p["epochs"],
-            )
+        _em = _ProgressEmitter(
+            publisher=ctx.publisher,
+            channel=ctx.channel,
+            request_id=p["request_id"],
+            user_id=p["user_id"],
+            model_id=p["model_id"],
+            total_epochs=p["epochs"],
         )
+        set_progress_emitter(_em)
+        _set_batch_emitter(_em)
+        _set_best_emitter(_em)
+        _set_epoch_emitter(_em)
         model_dir = _run_training(cfg)
         man = ModelManifest.from_path(model_dir / "manifest.json")
+        # Update emitter with run id and publish artifact event
+        _em.set_run_id(man.created_at.isoformat())
+        try:
+            if ctx.publisher is not None:
+                _art = ev.artifact(
+                    ev.Context(
+                        request_id=p["request_id"],
+                        user_id=p["user_id"],
+                        model_id=p["model_id"],
+                        run_id=man.created_at.isoformat(),
+                    ),
+                    path=str(model_dir),
+                )
+                ctx.publisher.publish(ctx.channel, ev.encode_event(_art))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
         completed: DigitsTrainCompletedEvent = {
             "type": "completed",
             "request_id": p["request_id"],
@@ -200,6 +238,21 @@ def process_train_job(payload: dict[str, object]) -> None:
             "val_acc": float(man.val_acc),
         }
         _publish_event(ctx.publisher, ctx.channel, completed)
+        # Versioned completed
+        try:
+            if ctx.publisher is not None:
+                _comp = ev.completed(
+                    ev.Context(
+                        request_id=p["request_id"],
+                        user_id=p["user_id"],
+                        model_id=p["model_id"],
+                        run_id=man.created_at.isoformat(),
+                    ),
+                    val_acc=float(man.val_acc),
+                )
+                ctx.publisher.publish(ctx.channel, ev.encode_event(_comp))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
     except (OSError, RuntimeError, ValueError, TypeError):
         _emit_failed(payload, "system", "system error")
         raise
@@ -236,6 +289,7 @@ class _ProgressEmitter:
         self._uid = int(user_id)
         self._mid = model_id
         self._tot = int(total_epochs)
+        self._run: str | None = None
 
     def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None:
         # Prefer configured total epochs; fall back to provided
@@ -250,6 +304,109 @@ class _ProgressEmitter:
             "val_acc": (float(val_acc) if isinstance(val_acc, float) else None),
         }
         _publish_event(self._publisher, self._channel, evt)
+        # Also publish versioned epoch summary with available fields
+        if isinstance(val_acc, float):
+            try:
+                if self._publisher is not None:
+                    _e = ev.epoch(
+                        ev.Context(
+                            request_id=self._req,
+                            user_id=self._uid,
+                            model_id=self._mid,
+                            run_id=self._run,
+                        ),
+                        epoch=int(epoch),
+                        total_epochs=int(tot),
+                        train_loss=0.0,
+                        val_acc=float(val_acc),
+                        time_s=0.0,
+                    )
+                    self._publisher.publish(self._channel, ev.encode_event(_e))
+            except (OSError, ValueError):
+                logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+
+    def set_run_id(self, run_id: str) -> None:
+        self._run = run_id
+
+    # Optional emitters wired in training.progress
+    def emit_batch(
+        self,
+        *,
+        epoch: int,
+        total_epochs: int,
+        batch: int,
+        total_batches: int,
+        batch_loss: float,
+        batch_acc: float,
+        avg_loss: float,
+        samples_per_sec: float,
+    ) -> None:
+        try:
+            if self._publisher is not None:
+                msg = ev.batch(
+                    ev.Context(
+                        request_id=self._req,
+                        user_id=self._uid,
+                        model_id=self._mid,
+                        run_id=self._run,
+                    ),
+                    epoch=int(epoch),
+                    total_epochs=int(total_epochs),
+                    batch=int(batch),
+                    total_batches=int(total_batches),
+                    batch_loss=float(batch_loss),
+                    batch_acc=float(batch_acc),
+                    avg_loss=float(avg_loss),
+                    samples_per_sec=float(samples_per_sec),
+                )
+                self._publisher.publish(self._channel, ev.encode_event(msg))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+
+    def emit_best(self, *, epoch: int, val_acc: float) -> None:
+        try:
+            if self._publisher is not None:
+                msg = ev.best(
+                    ev.Context(
+                        request_id=self._req,
+                        user_id=self._uid,
+                        model_id=self._mid,
+                        run_id=self._run,
+                    ),
+                    epoch=int(epoch),
+                    val_acc=float(val_acc),
+                )
+                self._publisher.publish(self._channel, ev.encode_event(msg))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+
+    def emit_epoch(
+        self,
+        *,
+        epoch: int,
+        total_epochs: int,
+        train_loss: float,
+        val_acc: float,
+        time_s: float,
+    ) -> None:
+        try:
+            if self._publisher is not None:
+                msg = ev.epoch(
+                    ev.Context(
+                        request_id=self._req,
+                        user_id=self._uid,
+                        model_id=self._mid,
+                        run_id=self._run,
+                    ),
+                    epoch=int(epoch),
+                    total_epochs=int(total_epochs),
+                    train_loss=float(train_loss),
+                    val_acc=float(val_acc),
+                    time_s=float(time_s),
+                )
+                self._publisher.publish(self._channel, ev.encode_event(msg))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
 
 
 def _as_int(v: object) -> int:
@@ -298,3 +455,14 @@ def _emit_failed(
         "message": msg,
     }
     _publish_event(ctx.publisher, ctx.channel, failed)
+    # Versioned failed
+    try:
+        if ctx.publisher is not None:
+            _f = ev.failed(
+                ev.Context(request_id=req, user_id=uid, model_id=mid, run_id=None),
+                error_kind=kind,
+                message=msg,
+            )
+            ctx.publisher.publish(ctx.channel, ev.encode_event(_f))
+    except (OSError, ValueError):
+        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")

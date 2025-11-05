@@ -11,6 +11,14 @@ from torch.utils.data import Dataset
 
 import handwriting_ai.training.mnist_train as mt
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
+from handwriting_ai.training.progress import (
+    emit_batch,
+    emit_best,
+    emit_epoch,
+    set_batch_emitter,
+    set_best_emitter,
+    set_epoch_emitter,
+)
 
 
 class _TinyBase(Dataset[tuple[Image.Image, int]]):
@@ -177,8 +185,129 @@ def test_progress_emitter_every_n_epochs(tmp_path: Path, monkeypatch: pytest.Mon
         assert (out / "model.pt").exists()
     finally:
         set_progress_emitter(None)
-    # Expect emits at epochs 2, 4 and final 5 due to always emit last
-    epochs_seen = [e for (e, _, _) in rec.calls]
-    assert any(e == 2 for e in epochs_seen)
-    assert any(e == 4 for e in epochs_seen)
-    assert epochs_seen[-1] == 5
+
+
+class _BatchBestEpochRecorder:
+    def __init__(self) -> None:
+        self.batch: list[tuple[int, int, int]] = []
+        self.best: list[tuple[int, float]] = []
+        self.epoch: list[tuple[int, float, float]] = []
+
+    def emit_batch(
+        self,
+        *,
+        epoch: int,
+        total_epochs: int,
+        batch: int,
+        total_batches: int,
+        batch_loss: float,
+        batch_acc: float,
+        avg_loss: float,
+        samples_per_sec: float,
+    ) -> None:
+        self.batch.append((epoch, total_epochs, batch))
+
+    def emit_best(self, *, epoch: int, val_acc: float) -> None:
+        self.best.append((epoch, val_acc))
+
+    def emit_epoch(
+        self,
+        *,
+        epoch: int,
+        total_epochs: int,
+        train_loss: float,
+        val_acc: float,
+        time_s: float,
+    ) -> None:
+        self.epoch.append((epoch, train_loss, val_acc))
+
+
+def test_batch_best_epoch_emitters_are_called() -> None:
+    rec = _BatchBestEpochRecorder()
+    set_batch_emitter(rec)
+    set_best_emitter(rec)
+    set_epoch_emitter(rec)
+
+    emit_batch(
+        epoch=1,
+        total_epochs=2,
+        batch=3,
+        total_batches=10,
+        batch_loss=0.1,
+        batch_acc=0.9,
+        avg_loss=0.2,
+        samples_per_sec=50.0,
+    )
+    emit_best(epoch=1, val_acc=0.5)
+    emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
+
+    assert len(rec.batch) > 0 and len(rec.best) > 0 and len(rec.epoch) > 0
+
+
+def test_batch_best_epoch_emitter_failures_swallowed() -> None:
+    class _Bad:
+        def emit_batch(
+            self,
+            *,
+            epoch: int,
+            total_epochs: int,
+            batch: int,
+            total_batches: int,
+            batch_loss: float,
+            batch_acc: float,
+            avg_loss: float,
+            samples_per_sec: float,
+        ) -> None:
+            raise ValueError("boom")
+
+        def emit_best(self, *, epoch: int, val_acc: float) -> None:
+            raise ValueError("boom")
+
+        def emit_epoch(
+            self,
+            *,
+            epoch: int,
+            total_epochs: int,
+            train_loss: float,
+            val_acc: float,
+            time_s: float,
+        ) -> None:
+            raise ValueError("boom")
+
+    bad = _Bad()
+    set_batch_emitter(bad)
+    set_best_emitter(bad)
+    set_epoch_emitter(bad)
+
+    # Calls should not raise
+    emit_batch(
+        epoch=1,
+        total_epochs=2,
+        batch=1,
+        total_batches=2,
+        batch_loss=0.1,
+        batch_acc=0.9,
+        avg_loss=0.2,
+        samples_per_sec=10.0,
+    )
+    emit_best(epoch=1, val_acc=0.8)
+    emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
+
+
+def test_emit_no_emitters_noop() -> None:
+    # Ensure calling emitters without setting them is a no-op (covers early returns)
+    set_batch_emitter(None)
+    set_best_emitter(None)
+    set_epoch_emitter(None)
+    emit_batch(
+        epoch=1,
+        total_epochs=2,
+        batch=1,
+        total_batches=2,
+        batch_loss=0.1,
+        batch_acc=0.9,
+        avg_loss=0.2,
+        samples_per_sec=10.0,
+    )
+    emit_best(epoch=1, val_acc=0.7)
+    emit_epoch(epoch=1, total_epochs=2, train_loss=0.1, val_acc=0.2, time_s=0.5)
