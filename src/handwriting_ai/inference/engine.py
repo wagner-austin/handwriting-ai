@@ -282,9 +282,8 @@ if TYPE_CHECKING:
 else:
 
     def _load_state_dict_file(path: Path) -> dict[str, Tensor]:
-        # Load state dict saved by our trainer. We save a pure state-dict (dict[str, Tensor]),
-        # so use a portable call signature that works across Torch builds.
-        obj = torch.load(path.as_posix(), map_location=torch.device("cpu"))
+        # Load state dict saved by our trainer using weights_only for safety.
+        obj = torch.load(path.as_posix(), map_location=torch.device("cpu"), weights_only=True)
         sd_obj = obj["state_dict"] if isinstance(obj, dict) and "state_dict" in obj else obj
         if not isinstance(sd_obj, dict):
             raise ValueError("state dict file did not contain a dict")
