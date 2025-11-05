@@ -264,6 +264,16 @@ def _register_read(
                 status_for(ErrorCode.timeout),
                 "Prediction timed out",
             ) from None
+        except RuntimeError as _err:
+            # Surface a clear error when engine has no model loaded
+            msg = str(_err)
+            if "Model not loaded" in msg:
+                raise AppError(
+                    ErrorCode.service_not_ready,
+                    status_for(ErrorCode.service_not_ready),
+                    "Model not loaded. Upload or train a model.",
+                ) from None
+            raise
 
         dt_ms = int((time.perf_counter() - t0) * 1000.0)
 
