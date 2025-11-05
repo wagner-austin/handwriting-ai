@@ -236,6 +236,9 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
 
     manifest_bytes = (model_dir / "manifest.json").read_bytes()
     model_bytes = (model_dir / "model.pt").read_bytes()
+    logging.getLogger("handwriting_ai").info(
+        f"worker_upload_prepare model_bytes={len(model_bytes)} manifest_bytes={len(manifest_bytes)}"
+    )
 
     data: dict[str, str] = {"model_id": model_id, "activate": "true" if activate else "false"}
     files = {

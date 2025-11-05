@@ -18,6 +18,7 @@ class ErrorCode(str, Enum):
     unauthorized = "unauthorized"
     malformed_multipart = "malformed_multipart"
     service_not_ready = "service_not_ready"
+    invalid_model = "invalid_model"
 
 
 _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
@@ -31,6 +32,7 @@ _DEFAULT_MESSAGE: Final[dict[ErrorCode, str]] = {
     ErrorCode.unauthorized: "Unauthorized.",
     ErrorCode.malformed_multipart: "Malformed multipart body.",
     ErrorCode.service_not_ready: "Model not loaded. Upload or train a model.",
+    ErrorCode.invalid_model: "Invalid model file.",
 }
 
 
@@ -81,4 +83,6 @@ def status_for(code: ErrorCode) -> int:
         return status.HTTP_400_BAD_REQUEST
     if code is ErrorCode.service_not_ready:
         return status.HTTP_503_SERVICE_UNAVAILABLE
+    if code is ErrorCode.invalid_model:
+        return status.HTTP_400_BAD_REQUEST
     return status.HTTP_500_INTERNAL_SERVER_ERROR

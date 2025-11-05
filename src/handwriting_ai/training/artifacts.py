@@ -38,6 +38,10 @@ def write_artifacts(
     model_unique = model_dir / f"model-{run_id}.pt"
     manifest_unique = model_dir / f"manifest-{run_id}.json"
     torch.save(model_state, model_unique.as_posix())
+    # Ensure file is fully written before copying
+    import os
+    model_unique_size = model_unique.stat().st_size
+    logging.getLogger("handwriting_ai").info(f"model_saved size_bytes={model_unique_size}")
     manifest = {
         "schema_version": "v1.1",
         "model_id": model_id,
@@ -62,4 +66,7 @@ def write_artifacts(
     manifest_unique.write_text(json.dumps(manifest), encoding="utf-8")
     shutil.copy2(model_unique, model_dir / "model.pt")
     shutil.copy2(manifest_unique, model_dir / "manifest.json")
+    # Log final artifact size for upload verification
+    final_model_size = (model_dir / "model.pt").stat().st_size
+    logging.getLogger("handwriting_ai").info(f"model_copied size_bytes={final_model_size}")
     return model_dir

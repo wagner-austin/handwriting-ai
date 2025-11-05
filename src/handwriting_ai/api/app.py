@@ -410,8 +410,14 @@ def _register_admin(
         dest = s.digits.model_dir / model_id
         dest.mkdir(parents=True, exist_ok=True)
         model_bytes = await model.read()
+        logging.getLogger("handwriting_ai").info(
+            f"admin_upload_received model_bytes={len(model_bytes)} manifest_bytes={len(man_bytes)}"
+        )
         (dest / "manifest.json").write_text(man_bytes.decode("utf-8"), encoding="utf-8")
         (dest / "model.pt").write_bytes(model_bytes)
+        # Verify write completed successfully
+        written_size = (dest / "model.pt").stat().st_size
+        logging.getLogger("handwriting_ai").info(f"admin_upload_written size_bytes={written_size}")
 
         if activate and model_id == s.digits.active_model:
             try:
