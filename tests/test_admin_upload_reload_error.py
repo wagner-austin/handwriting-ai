@@ -50,13 +50,22 @@ def test_admin_upload_reload_failure_is_logged_but_succeeds(tmp_path: Path) -> N
         "temperature": 1.0,
         "run_id": "t",
     }
+    # Provide a valid state dict buffer to satisfy strict validation
+    import torch
+
+    from handwriting_ai.inference.engine import build_fresh_state_dict
+
+    sd = build_fresh_state_dict(arch="resnet18", n_classes=10)
+    buf = io.BytesIO()
+    torch.save(sd, buf)
+    buf.seek(0)
     files = {
         "manifest": (
             "manifest.json",
             io.BytesIO(json.dumps(man).encode("utf-8")),
             "application/json",
         ),
-        "model": ("model.pt", io.BytesIO(b"pt"), "application/octet-stream"),
+        "model": ("model.pt", buf, "application/octet-stream"),
     }
     data = {"model_id": s.digits.active_model, "activate": "true"}
     res = client.post(

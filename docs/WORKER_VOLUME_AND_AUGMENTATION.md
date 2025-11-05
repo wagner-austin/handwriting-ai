@@ -1,13 +1,13 @@
 # Worker Volume + Training Augmentation — Verified Plan
 
-Status: implementation guide aligned with code and design doc
+Status: implementation guide aligned with code and design doc (verified)
 Audience: worker maintainers
 Principles: strict typing (mypy --strict), DRY, modular, deliberate changes only
 
 ## Overview
 
 This guide describes how to:
-- Mount a persistent `/data` volume for the Railway worker service
+- Mount a persistent `/data` volume for BOTH the API and the Railway worker services
 - Enable robust training augmentation (salt/pepper noise, random dots, optional blur/morph)
 
 It replaces fragile line-number instructions with resilient references to functions and files, and it centers configuration in the worker runtime to prevent drift and reduce future tech debt.
@@ -23,11 +23,11 @@ It replaces fragile line-number instructions with resilient references to functi
 - Job handler:
   - `src/handwriting_ai/jobs/digits.py` `_build_cfg` wires standard fields and basic affine augmentation; resolves `data_root` and `out_dir` via `Settings` to honor the `/data` volume. It does not pass noise/dots/blur/morph (worker runtime applies defaults when enabled).
 - Worker runtime:
-  - `scripts/worker._real_run_training` builds MNIST datasets at `cfg.data_root`, writes artifacts at `cfg.out_dir`, auto-sizes threads/batch, then uploads to API `/v1/admin/models/upload`.
+  - `scripts/worker._real_run_training` builds MNIST datasets at `cfg.data_root`, writes artifacts at `cfg.out_dir`, auto-sizes threads/batch, then uploads to API `/v1/admin/models/upload` using `httpx` multipart.
 - API:
   - `src/handwriting_ai/api/app.py` upload route writes production artifacts to `Settings.digits.model_dir` and hot‑reloads when appropriate.
 - Service configuration:
-  - `src/handwriting_ai/config.py` defaults to `/data` roots for app and digits model dir (overridable via env/TOML).
+  - `src/handwriting_ai/config.py` defaults to `/data` roots for app and digits model dir (overridable via env/TOML). Both API and worker must have the same `/data` volume mount to avoid drift.
 
 ---
 
@@ -42,14 +42,21 @@ It replaces fragile line-number instructions with resilient references to functi
 
 ## Part 1: Railway Volume Setup
 
-1) In the Railway dashboard for the worker service:
-- Add a volume and mount at `/data`.
+1) In the Railway dashboard:
+- API service: add a volume and mount at `/data`.
+- Worker service: add a volume and mount at `/data` (same storage backing as API if possible).
 
 2) Configure environment variables (align with `Settings`):
-- `APP__DATA_ROOT=/data`
-- `APP__ARTIFACTS_ROOT=/data/artifacts`
-- `REDIS_URL` and `RQ__QUEUE=digits`
-- `HANDWRITING_API_URL` and `HANDWRITING_API_KEY`
+- Common:
+  - `APP__DATA_ROOT=/data`
+  - `APP__ARTIFACTS_ROOT=/data/artifacts`
+  - `APP__LOGS_ROOT=/data/logs`
+  - `DIGITS__MODEL_DIR=/data/digits/models`
+- Worker-specific:
+  - `REDIS_URL`
+  - `RQ__QUEUE=digits`
+  - `HANDWRITING_API_URL`
+  - `HANDWRITING_API_KEY`
 
 Redeploy the worker service.
 
@@ -63,6 +70,7 @@ Centralize path resolution and augmentation defaults in the worker runtime.
 - What:
   - Derive `data_root` and `out_dir` from `Settings.load()` (which reflects `/data` volume via env/TOML) and set them on the `TrainConfig` before dataset creation.
   - When `cfg.augment` is `True` and augmentation knobs are left at defaults, set robust defaults for noise and dots (typed, no payload change).
+  - Use `httpx` for multipart upload to the API (runtime dependency added under `[tool.poetry.dependencies]`).
 
 Implementation summary (excerpt):
 
@@ -95,11 +103,14 @@ def _real_run_training(_: TrainConfig) -> Path:
 
 Rationale:
 - Keeps code DRY and typed; avoids duplicating path constants or knob defaults in multiple places.
-- Preserves test ergonomics (tests pass their own output paths and tiny in‑memory datasets).
+- Preserves test ergonomics (tests pass their own output paths and tiny in–memory datasets).
+
+Dependency note:
+- Ensure `httpx` is installed at runtime (moved from dev to main dependencies in `pyproject.toml`).
 
 ---
 
-## Part 3: Job‑Side Wiring (Implemented)
+## Part 3: Job–Side Wiring (Implemented)
 
 In addition to the runtime wiring, the job builder now resolves paths via `Settings`:
 
@@ -153,7 +164,8 @@ Signals of augmentation:
 - Augmentation is applied in `PreprocessDataset.__getitem__` when knobs are non‑zero.
 
 Persistence:
-- Redeploying the worker should not re‑download MNIST; the dataset remains under `/data/mnist` and artifacts under `/data/artifacts`.
+- Redeploying the worker should not re–download MNIST; the dataset remains under `/data/mnist` and artifacts under `/data/artifacts`.
+ - API writes artifacts to `DIGITS__MODEL_DIR` and may hot–reload when `activate=true`.
 
 ---
 
@@ -195,8 +207,9 @@ Expected results:
 ## Checklist (Before Production)
 
 - [ ] Worker has `/data` volume mounted
+- [ ] API has `/data` volume mounted
 - [ ] Env set: `APP__DATA_ROOT`, `APP__ARTIFACTS_ROOT`, `REDIS_URL`, `RQ__QUEUE`, `HANDWRITING_API_URL`, `HANDWRITING_API_KEY`
-- [ ] 1‑epoch test job completed successfully
+- [ ] 1–epoch test job completed successfully
 - [ ] Logs show `/data/...` paths, not relative paths
 - [ ] MNIST persists across redeploys
 - [ ] Augmentation knobs active when `augment=True`
@@ -215,6 +228,8 @@ Augmentation appears off
 Upload failures
 - Verify `HANDWRITING_API_URL` and `HANDWRITING_API_KEY` are set and valid.
 - Confirm artifacts written under `/data/artifacts/digits/models/...` before upload.
+- Check API logs for `admin_upload_received model_bytes=...`:
+  - If 0, the request body was empty (transport issue). The API rejects empty uploads. Verify proxy/client body size limits and that the worker has `httpx` at runtime.
 
 ---
 
@@ -226,7 +241,11 @@ Upload failures
 - Job handler: `src/handwriting_ai/jobs/digits.py` (`_build_cfg`, `process_train_job`)
 - Worker runtime: `scripts/worker.py` (`_real_run_training`, upload helpers)
 - API upload: `src/handwriting_ai/api/app.py` (admin upload route)
-- Multi‑phase design doc: `docs/Digits-Service-Plan.md`
+- Multi–phase design doc: `docs/Digits-Service-Plan.md`
+
+Admin upload semantics (two–phase):
+- When `activate=true`, the API strictly validates the uploaded model by loading the state dict and checking architecture/class count; on success it may hot–reload the active model.
+- When `activate=false`, the API writes the files and ensures the model blob is non–empty but does not parse weights; validation occurs when the model is later activated.
 
 ---
 

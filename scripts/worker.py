@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Final, Protocol
 from urllib.parse import urlparse
 
+import httpx
 import redis
 from torchvision.datasets import MNIST
 
@@ -204,7 +205,8 @@ def _http_post_multipart(
         path = parsed.path or "/"
         if parsed.query:
             path = path + "?" + parsed.query
-        headers = {"Content-Type": content_type, **headers_extra}
+        headers = {"Content-Type": content_type, "Content-Length": str(len(body)), **headers_extra}
+        logging.getLogger("handwriting_ai").info(f"worker_http_post body_len={len(body)} url={url}")
         conn.request("POST", path, body=body, headers=headers)
         resp = conn.getresponse()
         status = int(resp.status)
@@ -245,15 +247,17 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
         "manifest": ("manifest.json", manifest_bytes, "application/json"),
         "model": ("model.pt", model_bytes, "application/octet-stream"),
     }
-    body, ct = _encode_multipart(data, files)
     headers: dict[str, str] = {"X-Api-Key": api_key} if api_key else {}
 
     attempt = 0
     while True:
         attempt += 1
         try:
-            status, resp = _http_post_multipart(url, body, ct, headers, timeout_s)
-        except (OSError, RuntimeError, ValueError, TypeError):
+            with httpx.Client(timeout=timeout_s) as client:
+                r = client.post(url, headers=headers, data=data, files=files)
+                status = int(r.status_code)
+                resp = r.content
+        except (httpx.TimeoutException, httpx.RequestError):
             status = 0
             resp = b""
         if status == 200:

@@ -60,13 +60,22 @@ def test_admin_upload_writes_and_reloads(tmp_path: Path) -> None:
         "temperature": 1.0,
         "run_id": "t",
     }
+    # Build a valid state dict buffer to satisfy strict server-side validation
+    import torch
+
+    from handwriting_ai.inference.engine import build_fresh_state_dict
+
+    sd = build_fresh_state_dict(arch="resnet18", n_classes=10)
+    buf = io.BytesIO()
+    torch.save(sd, buf)
+    buf.seek(0)
     files = {
         "manifest": (
             "manifest.json",
             io.BytesIO(json.dumps(man).encode("utf-8")),
             "application/json",
         ),
-        "model": ("model.pt", io.BytesIO(b"pt"), "application/octet-stream"),
+        "model": ("model.pt", buf, "application/octet-stream"),
     }
     data = {"model_id": s.digits.active_model, "activate": "true"}
     res = client.post(
@@ -112,13 +121,22 @@ def test_admin_upload_sig_mismatch(tmp_path: Path) -> None:
         "val_acc": 0.99,
         "temperature": 1.0,
     }
+    # Use valid state dict to satisfy strict validation even when activate=false
+    import torch
+
+    from handwriting_ai.inference.engine import build_fresh_state_dict
+
+    sd = build_fresh_state_dict(arch="resnet18", n_classes=10)
+    buf = io.BytesIO()
+    torch.save(sd, buf)
+    buf.seek(0)
     files = {
         "manifest": (
             "manifest.json",
             io.BytesIO(json.dumps(man).encode("utf-8")),
             "application/json",
         ),
-        "model": ("model.pt", io.BytesIO(b"pt"), "application/octet-stream"),
+        "model": ("model.pt", buf, "application/octet-stream"),
     }
     data = {"model_id": s.digits.active_model, "activate": "false"}
     r = client.post("/v1/admin/models/upload", headers={"X-Api-Key": "k"}, files=files, data=data)
@@ -182,3 +200,65 @@ def test_admin_upload_no_activate_path(tmp_path: Path) -> None:
     assert res.status_code == 200
     # Engine should not reload when activate is false
     assert eng._reloaded is False
+
+
+def test_admin_upload_invalid_model_when_activate_true(tmp_path: Path) -> None:
+    s = _settings(tmp_path)
+    app = create_app(s, engine_provider=lambda: _FakeEngine(s))
+    client = TestClient(app)
+    man = {
+        "schema_version": "v1.1",
+        "model_id": s.digits.active_model,
+        "arch": "resnet18",
+        "n_classes": 10,
+        "version": "1.0.0",
+        "created_at": datetime.now(UTC).isoformat(),
+        "preprocess_hash": preprocess_signature(),
+        "val_acc": 0.99,
+        "temperature": 1.0,
+    }
+    files = {
+        "manifest": (
+            "manifest.json",
+            io.BytesIO(json.dumps(man).encode("utf-8")),
+            "application/json",
+        ),
+        # Invalid/truncated weights; with activate=true this must be rejected
+        "model": ("model.pt", io.BytesIO(b"pt"), "application/octet-stream"),
+    }
+    data = {"model_id": s.digits.active_model, "activate": "true"}
+    r = client.post("/v1/admin/models/upload", headers={"X-Api-Key": "k"}, files=files, data=data)
+    assert r.status_code == 400
+    txt = r.text.replace(" ", "").lower()
+    assert '"code":"invalid_model"' in txt
+
+
+def test_admin_upload_empty_model_when_not_activate_is_rejected(tmp_path: Path) -> None:
+    s = _settings(tmp_path)
+    app = create_app(s, engine_provider=lambda: _FakeEngine(s))
+    client = TestClient(app)
+    man = {
+        "schema_version": "v1.1",
+        "model_id": s.digits.active_model,
+        "arch": "resnet18",
+        "n_classes": 10,
+        "version": "1.0.0",
+        "created_at": datetime.now(UTC).isoformat(),
+        "preprocess_hash": preprocess_signature(),
+        "val_acc": 0.99,
+        "temperature": 1.0,
+    }
+    files = {
+        "manifest": (
+            "manifest.json",
+            io.BytesIO(json.dumps(man).encode("utf-8")),
+            "application/json",
+        ),
+        # Empty model blob should be rejected on the passive (no-activate) path
+        "model": ("model.pt", io.BytesIO(b""), "application/octet-stream"),
+    }
+    data = {"model_id": s.digits.active_model, "activate": "false"}
+    r = client.post("/v1/admin/models/upload", headers={"X-Api-Key": "k"}, files=files, data=data)
+    assert r.status_code == 400
+    txt = r.text.replace(" ", "").lower()
+    assert '"code":"invalid_model"' in txt

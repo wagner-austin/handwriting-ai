@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import io
 import logging
+import pickle
 import threading
 import time
 from collections.abc import Callable
@@ -17,6 +18,12 @@ from starlette.datastructures import FormData
 from ..config import Limits, Settings
 from ..errors import AppError, ErrorCode, new_error, status_for
 from ..inference.engine import InferenceEngine
+from ..inference.engine import (
+    _load_state_dict_file as _engine_load_state_dict_file,
+)
+from ..inference.engine import (
+    _validate_state_dict as _engine_validate_state_dict,
+)
 from ..inference.manifest import ModelManifest
 from ..logging import init_logging, log_event
 from ..middleware import RequestIdMiddleware, api_key_dependency
@@ -27,10 +34,12 @@ from .schemas import PredictResponse
 
 ImageFile.LOAD_TRUNCATED_IMAGES = False
 
-# Defaults for admin upload endpoint parameters (satisfy Ruff B008)
+# Defaults for admin upload endpoint parameters (satisfy Ruff B008).
+# Use distinct sentinels for separate UploadFile parameters to avoid object aliasing.
 _form_model_id: str = Form(...)
 _form_activate: bool = Form(False)
-_file_required: UploadFile = File(...)
+_file_required_manifest: UploadFile = File(...)
+_file_required_model: UploadFile = File(...)
 
 
 def _setup_optional_reloader(
@@ -391,9 +400,13 @@ def _register_admin(
     async def _upload_model(
         model_id: str = _form_model_id,
         activate: bool = _form_activate,
-        manifest: UploadFile = _file_required,
-        model: UploadFile = _file_required,
+        manifest: UploadFile = _file_required_manifest,
+        model: UploadFile = _file_required_model,
     ) -> dict[str, object]:
+        logging.getLogger("handwriting_ai").info(
+            f"upload_files_received manifest.filename={manifest.filename} "
+            f"model.filename={model.filename} same_object={manifest is model}"
+        )
         man_bytes = await manifest.read()
         try:
             man = ModelManifest.from_json(man_bytes.decode("utf-8"))
@@ -419,11 +432,36 @@ def _register_admin(
         written_size = (dest / "model.pt").stat().st_size
         logging.getLogger("handwriting_ai").info(f"admin_upload_written size_bytes={written_size}")
 
-        if activate and model_id == s.digits.active_model:
+        # Two-phase validation per design:
+        # - When activate=True: strictly validate by loading the state dict and checking shape,
+        #   then optionally reload the active engine.
+        # - When activate=False: ensure the model file is non-empty (transport sanity) but do not
+        #   attempt to parse weights; the model may be validated at activation time.
+        if activate:
+            load_errors = (RuntimeError, ValueError, TypeError, OSError, pickle.UnpicklingError)
             try:
-                engine.try_load_active()
-            except (RuntimeError, ValueError, OSError, TypeError):
-                logging.getLogger("handwriting_ai").info("admin_reload_failed")
+                sd = _engine_load_state_dict_file(dest / "model.pt")
+                _engine_validate_state_dict(sd, man.arch, int(man.n_classes))
+            except load_errors:
+                raise AppError(
+                    ErrorCode.invalid_model,
+                    status_for(ErrorCode.invalid_model),
+                    "Invalid model file",
+                ) from None
+
+            if model_id == s.digits.active_model:
+                try:
+                    engine.try_load_active()
+                except (RuntimeError, ValueError, OSError, TypeError):
+                    logging.getLogger("handwriting_ai").info("admin_reload_failed")
+        else:
+            # Basic transport-level check: avoid persisting empty artifacts
+            if written_size <= 0:
+                raise AppError(
+                    ErrorCode.invalid_model,
+                    status_for(ErrorCode.invalid_model),
+                    "Invalid model file",
+                )
 
         out: dict[str, object] = {
             "ok": True,
