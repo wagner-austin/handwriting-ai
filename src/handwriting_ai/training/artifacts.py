@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import secrets
 import shutil
 from datetime import UTC, datetime
@@ -39,7 +40,6 @@ def write_artifacts(
     manifest_unique = model_dir / f"manifest-{run_id}.json"
     torch.save(model_state, model_unique.as_posix())
     # Ensure file is fully written before copying
-    import os
     model_unique_size = model_unique.stat().st_size
     logging.getLogger("handwriting_ai").info(f"model_saved size_bytes={model_unique_size}")
     manifest = {
