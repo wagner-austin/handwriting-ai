@@ -113,8 +113,10 @@ class InferenceEngine:
             return
         try:
             sd = _load_state_dict_file(model_path)
-        except _LOAD_ERRORS:
-            logging.getLogger("handwriting_ai").info("state_dict_load_failed")
+        except _LOAD_ERRORS as e:
+            logging.getLogger("handwriting_ai").info(
+                "state_dict_load_failed exc=%s msg=%s", e.__class__.__name__, str(e)
+            )
             return
         try:
             _validate_state_dict(sd, manifest.arch, int(manifest.n_classes))
@@ -280,7 +282,9 @@ if TYPE_CHECKING:
 else:
 
     def _load_state_dict_file(path: Path) -> dict[str, Tensor]:
-        obj = torch.load(path.as_posix(), map_location=torch.device("cpu"), weights_only=True)
+        # Load state dict saved by our trainer. We save a pure state-dict (dict[str, Tensor]),
+        # so use a portable call signature that works across Torch builds.
+        obj = torch.load(path.as_posix(), map_location=torch.device("cpu"))
         sd_obj = obj["state_dict"] if isinstance(obj, dict) and "state_dict" in obj else obj
         if not isinstance(sd_obj, dict):
             raise ValueError("state dict file did not contain a dict")
