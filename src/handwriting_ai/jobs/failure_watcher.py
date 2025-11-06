@@ -4,10 +4,26 @@ import logging
 import os
 import time
 from dataclasses import dataclass
-from typing import Protocol
+from typing import TYPE_CHECKING
+from typing import Protocol as _Protocol
 
 from handwriting_ai.events import digits as ev
-from typing import Protocol as _Protocol
+
+if TYPE_CHECKING:
+
+    class _RedisClientProto(_Protocol):  # pragma: no cover - typing only
+        def publish(self, channel: str, message: str) -> int: ...
+        def sismember(self, key: str, member: str) -> bool: ...
+        def sadd(self, key: str, *members: str) -> int: ...
+
+    def _redis_from_url(url: str, *, decode_responses: bool = False) -> _RedisClientProto: ...
+
+else:  # pragma: no cover - runtime only
+
+    def _redis_from_url(url: str, *, decode_responses: bool = False):
+        import redis
+
+        return redis.Redis.from_url(url, decode_responses=decode_responses)
 
 
 def _make_logger() -> logging.Logger:
@@ -29,13 +45,12 @@ class _RedisPublisher:
         self._url = url
 
     def publish(self, channel: str, message: str) -> int:
-        try:  # defer import for tests and to avoid hard runtime dep if not used
-            import redis
-
-            client = redis.Redis.from_url(self._url)
-            return int(client.publish(channel, message))
-        except Exception:
-            _make_logger().info("redis_publish_failed")
+        try:
+            client = _redis_from_url(self._url)
+            out_val: int = int(client.publish(channel, message))
+            return out_val
+        except (OSError, RuntimeError, ValueError, TypeError, ConnectionError):
+            logging.getLogger("handwriting_ai").info("redis_publish_failed")
             return 0
 
 
@@ -46,50 +61,62 @@ class _RedisProcessedStore:
 
     def seen(self, job_id: str) -> bool:
         try:
-            import redis
-
-            client = redis.Redis.from_url(self._url)
-            val = client.sismember(self._key, job_id)
-            return bool(val)
-        except Exception:
-            _make_logger().info("redis_seen_failed")
+            client = _redis_from_url(self._url)
+            val: bool = bool(client.sismember(self._key, job_id))
+            return val
+        except (OSError, RuntimeError, ValueError, TypeError, ConnectionError):
+            logging.getLogger("handwriting_ai").info("redis_seen_failed")
             return False
 
     def mark(self, job_id: str) -> None:
         try:
-            import redis
-
-            client = redis.Redis.from_url(self._url)
+            client = _redis_from_url(self._url)
             client.sadd(self._key, job_id)
-        except Exception:
-            _make_logger().info("redis_mark_failed")
+        except (OSError, RuntimeError, ValueError, TypeError, ConnectionError):
+            logging.getLogger("handwriting_ai").info("redis_mark_failed")
 
 
-def _rq_connect(url: str) -> object:
-    try:
+if TYPE_CHECKING:
+
+    class _RQQueueProto(_Protocol):  # pragma: no cover - typing only
+        ...
+
+    class _RQRegistryProto(_Protocol):  # pragma: no cover - typing only
+        def get_job_ids(self) -> list[str]: ...
+
+    class _RQJobProto(_Protocol):  # pragma: no cover - typing only
+        args: object
+        exc_info: object
+
+    def _rq_connect(url: str) -> object: ...
+
+    def _rq_queue(conn: object, name: str) -> _RQQueueProto: ...
+
+    def _rq_failed_registry(queue: _RQQueueProto) -> _RQRegistryProto: ...
+
+    def _rq_fetch_job(conn: object, job_id: str) -> _RQJobProto: ...
+
+else:  # pragma: no cover - runtime only
+
+    def _rq_connect(url: str):
         import redis
 
         return redis.Redis.from_url(url, decode_responses=False)
-    except Exception as e:  # pragma: no cover - connectivity/environment
-        raise RuntimeError("failed to connect to redis") from e
 
+    def _rq_queue(conn, name):
+        import rq
 
-def _rq_queue(conn: object, name: str) -> object:
-    import rq
+        return rq.Queue(name, connection=conn)
 
-    return rq.Queue(name, connection=conn)
+    def _rq_failed_registry(queue):
+        import rq
 
+        return rq.registry.FailedJobRegistry(queue=queue)
 
-def _rq_failed_registry(queue: object) -> object:
-    import rq
+    def _rq_fetch_job(conn, job_id):
+        import rq
 
-    return rq.registry.FailedJobRegistry(queue=queue)
-
-
-def _rq_fetch_job(conn: object, job_id: str) -> object:
-    import rq
-
-    return rq.job.Job.fetch(job_id, connection=conn)
+        return rq.job.Job.fetch(job_id, connection=conn)
 
 
 def _summarize_exc_info(exc_info: object) -> str:
@@ -101,8 +128,8 @@ def _summarize_exc_info(exc_info: object) -> str:
 
 def _extract_payload(job: object) -> dict[str, object]:
     # RQ job.args is typically a tuple[list] of positional args
-    args = getattr(job, "args", None)
-    if isinstance(args, (list, tuple)) and args:
+    args: object = getattr(job, "args", None)
+    if isinstance(args, list | tuple) and len(args) > 0:
         first = args[0]
         if isinstance(first, dict):
             out: dict[str, object] = {}
@@ -132,7 +159,7 @@ class FailureWatcher:
         conn = _rq_connect(self.redis_url)
         q = _rq_queue(conn, self.queue_name)
         reg = _rq_failed_registry(q)
-        job_ids = list(getattr(reg, "get_job_ids", lambda: [])())
+        job_ids: list[str] = reg.get_job_ids()
         for jid in job_ids:
             if not isinstance(jid, str):
                 continue
@@ -143,22 +170,23 @@ class FailureWatcher:
                 continue
             try:
                 job = _rq_fetch_job(conn, jid)
-            except Exception:
+            except (RuntimeError, ValueError, TypeError, OSError):
                 # If the job cannot be fetched, mark it to avoid loops and continue
+                logging.getLogger("handwriting_ai").info("rq_fetch_failed")
                 st.mark(jid)
                 continue
             payload = _extract_payload(job)
             request_id = str(payload.get("request_id") or "")
-            try:
-                user_id_obj = payload.get("user_id")
-                user_id = int(user_id_obj) if not isinstance(user_id_obj, bool) else 0
-            except Exception:
-                user_id = 0
+            user_id_obj: object | None = payload.get("user_id")
+            user_id = user_id_obj if isinstance(user_id_obj, int) else 0
             model_id = str(payload.get("model_id") or "")
-            message = _summarize_exc_info(getattr(job, "exc_info", None))
+            exc: object = getattr(job, "exc_info", None)
+            message = _summarize_exc_info(exc)
             # Publish a system failure by default (worker crash or unhandled exception)
             evt = ev.failed(
-                ev.Context(request_id=request_id, user_id=user_id, model_id=model_id, run_id=None),
+                ev.Context(
+                    request_id=request_id, user_id=int(user_id), model_id=model_id, run_id=None
+                ),
                 error_kind="system",
                 message=message,
             )
@@ -180,8 +208,8 @@ class FailureWatcher:
         while True:
             try:
                 self.scan_once()
-            except Exception as e:
-                log.info("rq_failure_watcher_scan_error %s", e)
+            except (RuntimeError, ValueError, TypeError, OSError) as e:
+                logging.getLogger("handwriting_ai").info("rq_failure_watcher_scan_error %s", e)
             time.sleep(max(0.1, float(self.poll_interval_s)))
 
 

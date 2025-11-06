@@ -10,4 +10,3 @@ def main() -> int:  # pragma: no cover - thin wrapper
 
 if __name__ == "__main__":  # pragma: no cover - script entry
     raise SystemExit(main())
-

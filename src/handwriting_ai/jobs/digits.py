@@ -183,7 +183,11 @@ def process_train_job(payload: dict[str, object]) -> None:
         request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
     )
     _limits = detect_resource_limits()
-    _mem_mb = int(_limits.memory_bytes // (1024 * 1024)) if isinstance(_limits.memory_bytes, int) else None
+    _mem_mb = (
+        int(_limits.memory_bytes // (1024 * 1024))
+        if isinstance(_limits.memory_bytes, int)
+        else None
+    )
     _started_v1 = ev.started(
         _ctx,
         total_epochs=p["epochs"],

@@ -8,7 +8,16 @@ from handwriting_ai.events import digits as ev
 def test_encode_all_event_builders_cover_fields() -> None:
     ctx = ev.Context(request_id="r", user_id=7, model_id="m", run_id=None)
 
-    s = ev.started(ctx, total_epochs=2)
+    s = ev.started(
+        ctx,
+        total_epochs=2,
+        cpu_cores=2,
+        memory_mb=953,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=64,
+        device="cpu",
+    )
     assert s["type"] == "digits.train.started.v1"
     assert s["total_epochs"] == 2
 
