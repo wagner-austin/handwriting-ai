@@ -9,6 +9,7 @@ from typing import Final, Literal, Protocol, TypedDict
 
 from handwriting_ai.config import Settings
 from handwriting_ai.events import digits as ev
+from handwriting_ai.training.resources import detect_resource_limits
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
 from handwriting_ai.training.progress import (
@@ -177,11 +178,22 @@ def process_train_job(payload: dict[str, object]) -> None:
 
     ctx = _make_context()
 
-    # Publish versioned started event (no legacy fallback)
+    # Publish versioned started event (include resource limits for richer UX)
     _ctx = ev.Context(
         request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
     )
-    _started_v1 = ev.started(_ctx, total_epochs=p["epochs"])
+    _limits = detect_resource_limits()
+    _mem_mb = int(_limits.memory_bytes // (1024 * 1024)) if isinstance(_limits.memory_bytes, int) else None
+    _started_v1 = ev.started(
+        _ctx,
+        total_epochs=p["epochs"],
+        cpu_cores=int(_limits.cpu_cores),
+        memory_mb=_mem_mb,
+        optimal_threads=int(_limits.optimal_threads),
+        optimal_workers=int(_limits.optimal_workers),
+        max_batch_size=_limits.max_batch_size,
+        device="cpu",
+    )
     try:
         if ctx.publisher is not None:
             ctx.publisher.publish(ctx.channel, ev.encode_event(_started_v1))
