@@ -5,7 +5,7 @@ from pathlib import Path
 from PIL import Image
 from torch.utils.data import Dataset
 
-from handwriting_ai.training.calibrate import calibrate_input_pipeline
+from handwriting_ai.training.calibrate import _candidate_workers, calibrate_input_pipeline
 from handwriting_ai.training.resources import ResourceLimits
 
 
@@ -50,6 +50,19 @@ def test_calibrate_persists_and_reuses_cache(tmp_path: Path) -> None:
     )
     assert ec2.batch_size == ec1.batch_size
     assert ec2.loader_cfg.num_workers == ec1.loader_cfg.num_workers
+
+
+def test_candidate_workers_enumeration() -> None:
+    # Minimal sanity on worker enumeration; calibration decides, not heuristics
+    limits = ResourceLimits(
+        cpu_cores=2,
+        memory_bytes=None,
+        optimal_threads=1,
+        optimal_workers=0,
+        max_batch_size=None,
+    )
+    ws = _candidate_workers(limits)
+    assert 0 in ws and 1 in ws
 
 
 def test_calibrate_force_recomputes(tmp_path: Path) -> None:
