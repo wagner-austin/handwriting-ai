@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from collections.abc import Iterable
+from typing import Final, Protocol
+
+from PIL import Image
+from torch import Tensor
+from torch.nn.parameter import Parameter
+
+MNIST_N_CLASSES: Final[int] = 10
+
+
+class MNISTLike(Protocol):
+    def __len__(self) -> int: ...
+    def __getitem__(self, idx: int) -> tuple[Image.Image, int]: ...
+
+
+class TrainableModel(Protocol):
+    def train(self) -> object: ...
+    def eval(self) -> object: ...
+    def __call__(self, x: Tensor) -> Tensor: ...
+    def state_dict(self) -> dict[str, Tensor]: ...
+    def parameters(self) -> Iterable[Parameter]: ...
