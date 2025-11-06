@@ -3,13 +3,14 @@ from __future__ import annotations
 from collections.abc import Iterable
 from pathlib import Path
 
-SRC_DIRS: tuple[str, ...] = ("src", "tests")
+SRC_DIRS: tuple[str, ...] = ("src", "tests", "scripts")
 IGNORED_PARTS: set[str] = {
     ".venv",
     "__pycache__",
     ".mypy_cache",
     ".ruff_cache",
     ".pytest_cache",
+    "guards",  # Exclude scripts/guards/** from guard checks
 }
 
 
