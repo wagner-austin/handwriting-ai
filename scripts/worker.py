@@ -308,12 +308,29 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
                     "digits_settings_load_failed_default_keep_runs"
                 )
                 keep_runs = 3
+            # Measure directory size before and after prune for diagnostics
+            def _dir_size_bytes(root: Path) -> int:
+                total = 0
+                try:
+                    for p in root.rglob("*"):
+                        if p.is_file():
+                            try:
+                                total += p.stat().st_size
+                            except OSError:
+                                pass
+                except OSError:
+                    pass
+                return total
+
+            before = _dir_size_bytes(model_dir)
             try:
                 deleted = prune_model_artifacts(model_dir, max(0, keep_runs))
+                after = _dir_size_bytes(model_dir)
+                logging.getLogger("handwriting_ai").info(
+                    f"worker_prune_summary before_bytes={before} after_bytes={after} "
+                    f"delta_bytes={before - after} deleted_count={len(deleted)} keep_runs={keep_runs}"
+                )
                 if deleted:
-                    logging.getLogger("handwriting_ai").info(
-                        f"worker_prune_deleted count={len(deleted)}"
-                    )
                     _publish_prune_event(model_id, deleted_count=len(deleted))
             except (OSError, ValueError, TypeError):
                 logging.getLogger("handwriting_ai").info("worker_prune_failed")
