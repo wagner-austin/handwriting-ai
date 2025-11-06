@@ -87,6 +87,9 @@ def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
         return object()
 
     monkeypatch.setattr(cal, "_safe_loader", _safe, raising=True)
+    import handwriting_ai.training.calibration.measure as _meas
+
+    monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
 
     def _ml(
         ds_len: int,
@@ -97,6 +100,7 @@ def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
         return (10.0, 5.0)
 
     monkeypatch.setattr(cal, "_measure_loader", _ml, raising=True)
+    monkeypatch.setattr(_meas, "_measure_loader", _ml, raising=True)
 
     class _Base(MNISTLike):
         def __len__(self) -> int:
@@ -147,12 +151,78 @@ def test_measure_loader_paths() -> None:
     assert p952 >= 0.0 and sps2 >= 0.0
 
 
+def test_candidate_workers_is_generic(monkeypatch: pytest.MonkeyPatch) -> None:
+    # 1 core -> [0]
+    limits1 = ResourceLimits(
+        cpu_cores=1,
+        memory_bytes=None,
+        optimal_threads=1,
+        optimal_workers=0,
+        max_batch_size=None,
+    )
+    # 2 cores -> includes 1
+    limits2 = ResourceLimits(
+        cpu_cores=2,
+        memory_bytes=None,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=None,
+    )
+    # 8 cores -> includes 0..4 (bounded)
+    limits8 = ResourceLimits(
+        cpu_cores=8,
+        memory_bytes=None,
+        optimal_threads=4,
+        optimal_workers=2,
+        max_batch_size=None,
+    )
+
+    w1 = cal._candidate_workers(limits1)
+    w2 = cal._candidate_workers(limits2)
+    w8 = cal._candidate_workers(limits8)
+    assert w1 == [0]
+    assert 1 in w2 and 0 in w2
+    assert w8[0] == 0 and w8[-1] <= 4
+
+
+def test_measure_candidate_interop_branch(monkeypatch: pytest.MonkeyPatch) -> None:
+    class _Base(MNISTLike):
+        def __len__(self) -> int:
+            return 4
+
+        def __getitem__(self, idx: int) -> tuple[Image.Image, int]:
+            img = Image.new("L", (28, 28), 0)
+            return img, idx % 10
+
+    class _Cfg:
+        augment = False
+        aug_rotate = 0.0
+        aug_translate = 0.0
+        noise_prob = 0.0
+        noise_salt_vs_pepper = 0.5
+        dots_prob = 0.0
+        dots_count = 0
+        dots_size_px = 1
+        blur_sigma = 0.0
+        morph = "none"
+        morph_kernel_px = 1
+        batch_size = 1
+
+    ds = PreprocessDataset(_Base(), _Cfg())
+    cand = cal.Candidate(intra_threads=1, interop_threads=1, num_workers=0, batch_size=2)
+    # Use tiny sample and rely on default _measure_loader implementation
+    _ = cal._measure_candidate(ds, cand, samples=1)
+
+
 def test_measure_candidate_exhausts_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     # Always raise to force while-loop to terminate via bs_try < 1 path
     def _safe(_: object, __: DataLoaderConfig) -> object:
         raise RuntimeError("no memory")
 
     monkeypatch.setattr(cal, "_safe_loader", _safe, raising=True)
+    import handwriting_ai.training.calibration.measure as _meas
+
+    monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
 
     def _ml2(
         ds_len: int,
