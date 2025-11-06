@@ -271,6 +271,40 @@ def test_scan_once_skips_non_string_job_ids(monkeypatch: pytest.MonkeyPatch) -> 
     assert pub.items == []
 
 
+def test_scan_once_with_no_failed_jobs(monkeypatch: pytest.MonkeyPatch) -> None:
+    pub = _Pub()
+    store = _Store()
+
+    def _conn(_url: str) -> object:
+        return object()
+
+    def _queue(_c: object, _n: str) -> object:
+        return object()
+
+    class _Reg:
+        def get_job_ids(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr(mod, "_rq_connect", _conn, raising=True)
+    monkeypatch.setattr(mod, "_rq_queue", _queue, raising=True)
+
+    def _mk_reg2(_q: object) -> object:
+        return _Reg()
+
+    monkeypatch.setattr(mod, "_rq_failed_registry", _mk_reg2, raising=True)
+
+    fw = FWatcher(
+        redis_url="redis://localhost:6379/0",
+        queue_name="digits",
+        events_channel="digits:events",
+        publisher=pub,
+        store=store,
+    )
+    # Nothing to process, should do nothing and not error
+    fw.scan_once()
+    assert pub.items == [] and store.seen_ids == set()
+
+
 def test_run_from_env_invokes_run_forever(monkeypatch: pytest.MonkeyPatch) -> None:
     called: dict[str, int] = {"n": 0}
 
