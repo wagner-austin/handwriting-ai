@@ -14,6 +14,12 @@ class StartedV1(TypedDict):
     run_id: str | None
     ts: str
     total_epochs: int
+    cpu_cores: int
+    memory_mb: int | None
+    optimal_threads: int
+    optimal_workers: int
+    max_batch_size: int | None
+    device: str
 
 
 class BatchV1(TypedDict):
@@ -140,7 +146,17 @@ class Context:
     run_id: str | None
 
 
-def started(ctx: Context, *, total_epochs: int) -> StartedV1:
+def started(
+    ctx: Context,
+    *,
+    total_epochs: int,
+    cpu_cores: int,
+    memory_mb: int | None,
+    optimal_threads: int,
+    optimal_workers: int,
+    max_batch_size: int | None,
+    device: str,
+) -> StartedV1:
     return {
         "type": "digits.train.started.v1",
         "request_id": ctx.request_id,
@@ -149,6 +165,12 @@ def started(ctx: Context, *, total_epochs: int) -> StartedV1:
         "run_id": ctx.run_id,
         "ts": _ts(),
         "total_epochs": int(total_epochs),
+        "cpu_cores": int(cpu_cores),
+        "memory_mb": (int(memory_mb) if isinstance(memory_mb, int) else None),
+        "optimal_threads": int(optimal_threads),
+        "optimal_workers": int(optimal_workers),
+        "max_batch_size": (int(max_batch_size) if max_batch_size is not None else None),
+        "device": str(device),
     }
 
 
