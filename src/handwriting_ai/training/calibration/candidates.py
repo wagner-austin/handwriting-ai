@@ -22,11 +22,23 @@ def _candidate_threads(limits: ResourceLimits) -> list[int]:
 
 
 def _candidate_workers(limits: ResourceLimits) -> list[int]:
-    # Enumerate a bounded range; the calibrator decides empirically.
+    """Enumerate worker candidates within safe, bounded limits.
+
+    We keep enumeration compact for Stage A calibration while respecting
+    memory constraints. This does not pick a value heuristically; it bounds
+    the search space that calibration measures empirically.
+    """
     cores = max(0, int(limits.cpu_cores))
     if cores <= 1:
         return [0]
-    upper = min(2, cores)
+    # Base bound by cores to keep search compact
+    upper_by_cores = min(2, cores)
+    # Memory-aware bound: on sub-1.2 GiB environments, avoid exploring >1 worker
+    upper_by_mem = upper_by_cores
+    mem = limits.memory_bytes
+    if mem is not None and mem < int(1.2 * 1024 * 1024 * 1024):
+        upper_by_mem = min(1, upper_by_cores)
+    upper = min(upper_by_cores, upper_by_mem)
     return list(range(0, upper + 1))
 
 
