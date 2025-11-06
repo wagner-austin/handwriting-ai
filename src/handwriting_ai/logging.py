@@ -4,6 +4,7 @@ import json
 import logging
 import os
 import sys
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from typing import Final, Literal, Protocol, TypedDict, runtime_checkable
 
@@ -166,7 +167,7 @@ class LogEvent(TypedDict, total=False):
     uncertain: bool
 
 
-def log_event(event: str, fields: LogEvent | None = None) -> None:
+def log_event(event: str, fields: Mapping[str, object] | None = None) -> None:
     logger = get_logger()
     parts: list[str] = [f"event={event}"]
     if fields is not None:
