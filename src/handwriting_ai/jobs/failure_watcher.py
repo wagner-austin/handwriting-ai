@@ -7,14 +7,18 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from handwriting_ai.events import digits as ev
-from handwriting_ai.jobs.digits import Publisher
+from typing import Protocol as _Protocol
 
 
 def _make_logger() -> logging.Logger:
     return logging.getLogger("handwriting_ai")
 
 
-class _ProcessedStore(Protocol):  # pragma: no cover - typing only
+class Publisher(_Protocol):  # narrow protocol; avoids heavy jobs import
+    def publish(self, channel: str, message: str) -> int: ...
+
+
+class _ProcessedStore(_Protocol):  # pragma: no cover - typing only
     def seen(self, job_id: str) -> bool: ...
 
     def mark(self, job_id: str) -> None: ...
