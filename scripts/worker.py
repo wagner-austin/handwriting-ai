@@ -125,6 +125,12 @@ def _real_run_training(_: TrainConfig) -> Path:
     # Resolve volume-aware paths and apply augmentation defaults (typed, DRY)
     cfg = _resolve_training_paths(cfg)
     cfg = _apply_aug_defaults_if_needed(cfg)
+    # Enable empirical calibration by default for worker runs to avoid heuristic drift.
+    # Keep caller overrides if provided.
+    from dataclasses import replace as _replace
+
+    if not getattr(cfg, "calibrate", False):
+        cfg = _replace(cfg, calibrate=True)
 
     data_root = cfg.data_root
     # MNIST returns PIL Image and int labels; matches MNISTLike protocol expectations
@@ -251,6 +257,139 @@ def _publish_prune_event(model_id: str, *, deleted_count: int) -> None:
         logging.getLogger("handwriting_ai").debug("worker_prune_event_failed")
 
 
+def _compute_space_audit(
+    root: Path, *, n_files: int = 10, n_dirs: int = 5
+) -> tuple[list[tuple[Path, int]], list[tuple[Path, int]]]:
+    import contextlib
+
+    files: list[tuple[Path, int]] = []
+    dir_sizes: dict[Path, int] = {}
+
+    with contextlib.suppress(OSError):
+        for p in root.rglob("*"):
+            with contextlib.suppress(OSError):
+                if p.is_file():
+                    size = int(p.stat().st_size)
+                    files.append((p, size))
+                    parent = p.parent
+                    dir_sizes[parent] = int(dir_sizes.get(parent, 0) + size)
+
+    files.sort(key=lambda kv: kv[1], reverse=True)
+    top_files = files[: max(0, int(n_files))]
+
+    rolled: dict[Path, int] = {}
+    for d, sz in dir_sizes.items():
+        from contextlib import suppress as _suppress
+
+        with _suppress(ValueError):
+            rel = d.relative_to(root)
+        if "rel" not in locals():
+            # Skip directories not under root
+            continue
+        parts = rel.parts
+        key = root / parts[0] if parts else root
+        rolled[key] = int(rolled.get(key, 0) + sz)
+
+    top_dirs = sorted(rolled.items(), key=lambda kv: kv[1], reverse=True)[: max(0, int(n_dirs))]
+    return top_files, top_dirs
+
+
+def _format_space_audit(
+    root: Path, files: list[tuple[Path, int]], dirs: list[tuple[Path, int]]
+) -> dict[str, object]:
+    return {
+        "root": root.as_posix(),
+        "top_files": [{"path": p.as_posix(), "size_bytes": int(sz)} for p, sz in files],
+        "top_dirs": [{"path": p.as_posix(), "size_bytes": int(sz)} for p, sz in dirs],
+    }
+
+
+def _dir_size_bytes(root: Path) -> int:
+    import contextlib
+
+    total = 0
+    with contextlib.suppress(OSError):
+        for p in root.rglob("*"):
+            if p.is_file():
+                with contextlib.suppress(OSError):
+                    total += p.stat().st_size
+    return total
+
+
+def _prepare_upload_payload(
+    model_dir: Path, model_id: str, *, activate: bool
+) -> tuple[dict[str, str], dict[str, tuple[str, bytes, str]], bytes, bytes]:
+    manifest_bytes = (model_dir / "manifest.json").read_bytes()
+    model_bytes = (model_dir / "model.pt").read_bytes()
+    logging.getLogger("handwriting_ai").info(
+        f"worker_upload_prepare model_bytes={len(model_bytes)} manifest_bytes={len(manifest_bytes)}"
+    )
+    data: dict[str, str] = {"model_id": model_id, "activate": "true" if activate else "false"}
+    files: dict[str, tuple[str, bytes, str]] = {
+        "manifest": ("manifest.json", manifest_bytes, "application/json"),
+        "model": ("model.pt", model_bytes, "application/octet-stream"),
+    }
+    return data, files, manifest_bytes, model_bytes
+
+
+def _try_upload(
+    url: str,
+    *,
+    headers: dict[str, str],
+    data: dict[str, str],
+    files: dict[str, tuple[str, bytes, str]],
+    timeout_s: float,
+) -> tuple[int, bytes]:
+    try:
+        with httpx.Client(timeout=timeout_s) as client:
+            r = client.post(url, headers=headers, data=data, files=files)
+            return int(r.status_code), r.content
+    except (httpx.TimeoutException, httpx.RequestError):
+        logging.getLogger("handwriting_ai").info("worker_upload_http_error")
+        return 0, b""
+
+
+def _prune_and_report(model_dir: Path, model_id: str) -> None:
+    try:
+        s = Settings.load()
+        keep_runs = int(getattr(s.digits, "retention_keep_runs", 3))
+    except (RuntimeError, ValueError, TypeError):
+        logging.getLogger("handwriting_ai").info("digits_settings_load_failed_default_keep_runs")
+        keep_runs = 3
+    before = _dir_size_bytes(model_dir)
+    try:
+        deleted = prune_model_artifacts(model_dir, max(0, keep_runs))
+        after = _dir_size_bytes(model_dir)
+        delta = before - after
+        logging.getLogger("handwriting_ai").info(
+            f"worker_prune_summary before={before} after={after} delta={delta} "
+            f"deleted={len(deleted)} keep_runs={keep_runs}"
+        )
+        if deleted:
+            _publish_prune_event(model_id, deleted_count=len(deleted))
+    except (OSError, ValueError, TypeError):
+        logging.getLogger("handwriting_ai").info("worker_prune_failed")
+
+
+def _emit_space_audits(model_dir: Path) -> None:
+    # Emit a top-N space audit at the model root (best-effort)
+    model_root = model_dir.parent
+    top_files, top_dirs = _compute_space_audit(model_root, n_files=5, n_dirs=5)
+    payload = _format_space_audit(model_root, top_files, top_dirs)
+    logging.getLogger("handwriting_ai").info("space_audit " + json.dumps(payload))
+    # Optional full artifacts root audit if env enables it
+    try:
+        s = Settings.load()
+        artifacts_root = s.app.artifacts_root
+        tf2, td2 = _compute_space_audit(artifacts_root, n_files=5, n_dirs=5)
+        payload2 = _format_space_audit(artifacts_root, tf2, td2)
+        flag = (_get_env_str("HANDWRITING_SPACE_AUDIT_ALL") or "").strip().lower()
+        if flag in {"1", "true", "yes", "on"}:
+            logging.getLogger("handwriting_ai").info("space_audit_all " + json.dumps(payload2))
+    except (RuntimeError, ValueError, TypeError, OSError):
+        logging.getLogger("handwriting_ai").debug("space_audit_all_skipped")
+
+
 def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
     url = _resolve_upload_url()
     api_key = _get_env_str("HANDWRITING_API_KEY")
@@ -263,77 +402,29 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
     backoff_ms = 500  # fixed default; no env fallback by design
     strict = True  # strict by default; no env fallback by design
 
-    manifest_bytes = (model_dir / "manifest.json").read_bytes()
-    model_bytes = (model_dir / "model.pt").read_bytes()
-    logging.getLogger("handwriting_ai").info(
-        f"worker_upload_prepare model_bytes={len(model_bytes)} manifest_bytes={len(manifest_bytes)}"
+    data, files, manifest_bytes, model_bytes = _prepare_upload_payload(
+        model_dir, model_id, activate=activate
     )
-
-    data: dict[str, str] = {"model_id": model_id, "activate": "true" if activate else "false"}
-    files = {
-        "manifest": ("manifest.json", manifest_bytes, "application/json"),
-        "model": ("model.pt", model_bytes, "application/octet-stream"),
-    }
-    headers: dict[str, str] = {"X-Api-Key": api_key} if api_key else {}
+    headers: dict[str, str] = {"X-Api-Key": api_key}
 
     attempt = 0
     while True:
         attempt += 1
-        try:
-            with httpx.Client(timeout=timeout_s) as client:
-                r = client.post(url, headers=headers, data=data, files=files)
-                status = int(r.status_code)
-                resp = r.content
-        except (httpx.TimeoutException, httpx.RequestError):
-            logging.getLogger("handwriting_ai").info("worker_upload_http_error")
-            status = 0
-            resp = b""
+        status, resp = _try_upload(
+            url, headers=headers, data=data, files=files, timeout_s=timeout_s
+        )
         if status == 200:
             logging.getLogger("handwriting_ai").info(
                 f"worker_upload_success status={status} bytes={len(resp)}"
             )
-            # Publish upload event (request_id unknown in this context)
             _publish_upload_event(
                 model_id,
                 status=status,
                 model_bytes=len(model_bytes),
                 manifest_bytes=len(manifest_bytes),
             )
-            # Prune older training snapshots to keep volume usage bounded
-            try:
-                s = Settings.load()
-                keep_runs = int(getattr(s.digits, "retention_keep_runs", 3))
-            except (RuntimeError, ValueError, TypeError):
-                logging.getLogger("handwriting_ai").info(
-                    "digits_settings_load_failed_default_keep_runs"
-                )
-                keep_runs = 3
-            # Measure directory size before and after prune for diagnostics
-            def _dir_size_bytes(root: Path) -> int:
-                total = 0
-                try:
-                    for p in root.rglob("*"):
-                        if p.is_file():
-                            try:
-                                total += p.stat().st_size
-                            except OSError:
-                                pass
-                except OSError:
-                    pass
-                return total
-
-            before = _dir_size_bytes(model_dir)
-            try:
-                deleted = prune_model_artifacts(model_dir, max(0, keep_runs))
-                after = _dir_size_bytes(model_dir)
-                logging.getLogger("handwriting_ai").info(
-                    f"worker_prune_summary before_bytes={before} after_bytes={after} "
-                    f"delta_bytes={before - after} deleted_count={len(deleted)} keep_runs={keep_runs}"
-                )
-                if deleted:
-                    _publish_prune_event(model_id, deleted_count=len(deleted))
-            except (OSError, ValueError, TypeError):
-                logging.getLogger("handwriting_ai").info("worker_prune_failed")
+            _prune_and_report(model_dir, model_id)
+            _emit_space_audits(model_dir)
             return
         if attempt >= max(1, retries):
             logging.getLogger("handwriting_ai").info(
