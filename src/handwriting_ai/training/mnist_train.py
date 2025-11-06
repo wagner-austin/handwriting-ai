@@ -145,19 +145,18 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     device = torch.device(cfg.device)
     # Compute and apply effective configuration
     ec, limits = build_effective_config(cfg)
-    # Optional empirical preflight calibration
-    if cfg.calibrate:
-        cache_path = Path("artifacts") / "calibration.json"
-        ttl_s = 7 * 24 * 60 * 60
-        ec = calibrate_input_pipeline(
-            bases[0],
-            limits=limits,
-            requested_batch_size=int(cfg.batch_size),
-            samples=max(1, int(cfg.calibration_samples)),
-            cache_path=cache_path,
-            ttl_seconds=ttl_s,
-            force=bool(cfg.force_calibration),
-        )
+    # Always run empirical preflight calibration to avoid heuristic drift.
+    cache_path = Path("artifacts") / "calibration.json"
+    ttl_s = 7 * 24 * 60 * 60
+    ec = calibrate_input_pipeline(
+        bases[0],
+        limits=limits,
+        requested_batch_size=int(ec.batch_size),
+        samples=max(1, int(cfg.calibration_samples)),
+        cache_path=cache_path,
+        ttl_seconds=ttl_s,
+        force=bool(cfg.force_calibration),
+    )
     apply_threads(ec)
     # Log threading and device configuration
     intra = torch.get_num_threads()
