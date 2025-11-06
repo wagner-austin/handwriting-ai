@@ -139,8 +139,30 @@ class PreprocessDataset(Dataset[tuple[Tensor, Tensor]]):
         return t, torch.tensor(int(label), dtype=torch.long)
 
 
+@dataclass(frozen=True)
+class DataLoaderConfig:
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+
+    def __post_init__(self) -> None:
+        if int(self.batch_size) <= 0:
+            raise ValueError("batch_size must be > 0")
+        if int(self.num_workers) < 0:
+            raise ValueError("num_workers must be >= 0")
+        if int(self.prefetch_factor) < 0:
+            raise ValueError("prefetch_factor must be >= 0")
+        if self.persistent_workers and int(self.num_workers) == 0:
+            raise ValueError("persistent_workers requires num_workers > 0")
+
+
 def make_loaders(
-    train_base: MNISTLike, test_base: MNISTLike, cfg: _TrainCfgProto
+    train_base: MNISTLike,
+    test_base: MNISTLike,
+    cfg: _TrainCfgProto,
+    loader_cfg: DataLoaderConfig | None = None,
 ) -> tuple[
     Dataset[tuple[Tensor, Tensor]],
     DataLoader[tuple[Tensor, Tensor]],
@@ -148,10 +170,35 @@ def make_loaders(
 ]:
     train_ds: Dataset[tuple[Tensor, Tensor]] = PreprocessDataset(train_base, cfg)
     test_ds: Dataset[tuple[Tensor, Tensor]] = PreprocessDataset(test_base, cfg)
-    train_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
-        train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0
-    )
-    test_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
-        test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0
-    )
+
+    bs = int(loader_cfg.batch_size) if loader_cfg is not None else int(cfg.batch_size)
+    num_workers = int(loader_cfg.num_workers) if loader_cfg is not None else 0
+    pin_mem = bool(loader_cfg.pin_memory) if loader_cfg is not None else False
+    # Only set prefetch_factor / persistent_workers when num_workers > 0
+    if num_workers > 0 and loader_cfg is not None:
+        train_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
+            train_ds,
+            batch_size=bs,
+            shuffle=True,
+            num_workers=num_workers,
+            pin_memory=pin_mem,
+            prefetch_factor=int(loader_cfg.prefetch_factor),
+            persistent_workers=bool(loader_cfg.persistent_workers),
+        )
+        test_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
+            test_ds,
+            batch_size=bs,
+            shuffle=False,
+            num_workers=num_workers,
+            pin_memory=pin_mem,
+            prefetch_factor=int(loader_cfg.prefetch_factor),
+            persistent_workers=bool(loader_cfg.persistent_workers),
+        )
+    else:
+        train_loader = DataLoader(
+            train_ds, batch_size=bs, shuffle=True, num_workers=num_workers, pin_memory=pin_mem
+        )
+        test_loader = DataLoader(
+            test_ds, batch_size=bs, shuffle=False, num_workers=num_workers, pin_memory=pin_mem
+        )
     return train_ds, train_loader, test_loader
