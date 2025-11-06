@@ -112,7 +112,7 @@ train: install-dev
 train-long: install-dev
 	poetry run python scripts/train_mnist_resnet18.py --config ./config/trainer.toml --log-style pretty
 
-# Copy a trained artifact from artifacts/ to seed/ so Dockerfile can bake it into /seed.
+# Copy a trained artifact from artifacts/ to seed/ so Dockerfile can bake it into /seed
 # Usage (PowerShell): make seed-model MODEL_ID=mnist_resnet18_v1
 SEED_SRC ?= ./artifacts/digits/models
 SEED_DST ?= ./seed/digits/models
