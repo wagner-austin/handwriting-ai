@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from typing import Annotated, Protocol
+from weakref import WeakKeyDictionary
 
 from fastapi import Depends, FastAPI, File, Form, Header, Request, UploadFile
 from fastapi.params import Depends as DependsParamType
@@ -78,6 +79,27 @@ def _setup_optional_reloader(
 
     app.add_event_handler("startup", _start_bg_reloader)
     app.add_event_handler("shutdown", _stop_bg_reloader)
+    # Expose handlers for white-box tests via a weak map keyed by app instance
+    _RELOADER_HANDLES[app] = (_start_bg_reloader, _stop_bg_reloader)
+
+
+_RELOADER_HANDLES: WeakKeyDictionary[FastAPI, tuple[Callable[[], None], Callable[[], None]]] = (
+    WeakKeyDictionary()
+)
+
+
+def _debug_invoke_reloader_start(app: FastAPI) -> None:
+    pair = _RELOADER_HANDLES.get(app)
+    if pair is not None:
+        start, _ = pair
+        start()
+
+
+def _debug_invoke_reloader_stop(app: FastAPI) -> None:
+    pair = _RELOADER_HANDLES.get(app)
+    if pair is not None:
+        _, stop = pair
+        stop()
 
 
 # Exception handlers (module-level to keep app factory simple)
