@@ -39,7 +39,7 @@ def _parse_args(argv: list[str]) -> _Args:
         help="Path to JSON payload for digits.train.v1",
     )
     ns = ap.parse_args(argv)
-    # Avoid Any from argparse.Namespace by coercing through str -> Path
+    # Avoid untyped namespace; coerce via str -> Path
     return _Args(payload_file=Path(str(ns.payload_file)))
 
 
@@ -96,6 +96,7 @@ def _resolve_training_paths(cfg: TrainConfig) -> TrainConfig:
         return replace(cfg, data_root=resolved_data_root, out_dir=resolved_out_dir)
     except (RuntimeError, OSError, ValueError, TypeError):
         # Fallback to provided paths if Settings cannot be loaded in this environment
+        logging.getLogger("handwriting_ai").info("settings_load_failed_fallback")
         cfg.data_root.mkdir(parents=True, exist_ok=True)
         cfg.out_dir.mkdir(parents=True, exist_ok=True)
         return cfg
@@ -121,16 +122,6 @@ def _apply_aug_defaults_if_needed(cfg: TrainConfig) -> TrainConfig:
 
 def _real_run_training(_: TrainConfig) -> Path:
     cfg = _
-    # Auto-size to container limits (no manual tunables required)
-    if getattr(cfg, "threads", 0) <= 0:
-        cfg = replace(cfg, threads=_detect_cpu_threads())
-    cap = _decide_batch_cap(_mem_limit_bytes())
-    if cap is not None and cfg.batch_size > cap:
-        cfg = replace(cfg, batch_size=cap)
-    # Log the effective auto-sized configuration for observability
-    logging.getLogger("handwriting_ai").info(
-        "train_auto_config threads=%s batch_size=%s", cfg.threads, cfg.batch_size
-    )
     # Resolve volume-aware paths and apply augmentation defaults (typed, DRY)
     cfg = _resolve_training_paths(cfg)
     cfg = _apply_aug_defaults_if_needed(cfg)
@@ -164,6 +155,7 @@ def _env_int(name: str, default: int) -> int:
     try:
         return int(v)
     except ValueError:
+        logging.getLogger("handwriting_ai").info(f"env_int_parse_failed name={name}")
         return default
 
 
@@ -293,6 +285,7 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
                 status = int(r.status_code)
                 resp = r.content
         except (httpx.TimeoutException, httpx.RequestError):
+            logging.getLogger("handwriting_ai").info("worker_upload_http_error")
             status = 0
             resp = b""
         if status == 200:
@@ -311,6 +304,9 @@ def _maybe_upload_artifacts(model_dir: Path, model_id: str) -> None:
                 s = Settings.load()
                 keep_runs = int(getattr(s.digits, "retention_keep_runs", 3))
             except (RuntimeError, ValueError, TypeError):
+                logging.getLogger("handwriting_ai").info(
+                    "digits_settings_load_failed_default_keep_runs"
+                )
                 keep_runs = 3
             try:
                 deleted = prune_model_artifacts(model_dir, max(0, keep_runs))
@@ -347,65 +343,7 @@ def _resolve_upload_url() -> str:
 # No multi-name env readers by design (shared globals only)
 
 
-# ---- Resource detection helpers (auto-sizing) ----
-
-
-def _read_text_file(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return None
-
-
-def _detect_cpu_threads() -> int:
-    cpu_max = _read_text_file(Path("/sys/fs/cgroup/cpu.max"))
-    if cpu_max and cpu_max != "max":
-        parts = cpu_max.split()
-        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-            quota = int(parts[0])
-            period = int(parts[1]) or 100000
-            if quota > 0 and period > 0:
-                return max(1, quota // period)
-    cfs_quota = _read_text_file(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us"))
-    cfs_period = _read_text_file(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us"))
-    if cfs_quota and cfs_period and cfs_quota.isdigit() and cfs_period.isdigit():
-        quota_us = int(cfs_quota)
-        period_us = int(cfs_period) or 100000
-        if quota_us > 0 and period_us > 0:
-            return max(1, quota_us // period_us)
-    aff = getattr(os, "sched_getaffinity", None)
-    if callable(aff):
-        try:
-            return max(1, len(aff(0)))
-        except OSError:
-            # Fall through to cpu_count()
-            pass
-    return max(1, os.cpu_count() or 1)
-
-
-def _mem_limit_bytes() -> int | None:
-    mem_max = _read_text_file(Path("/sys/fs/cgroup/memory.max"))
-    if mem_max and mem_max.isdigit():
-        val = int(mem_max)
-        return None if val <= 0 else val
-    mem_v1 = _read_text_file(Path("/sys/fs/cgroup/memory/memory.limit_in_bytes"))
-    if mem_v1 and mem_v1.isdigit():
-        val = int(mem_v1)
-        return val if val < (1 << 60) else None
-    return None
-
-
-def _decide_batch_cap(mem_bytes: int | None) -> int | None:
-    if mem_bytes is None:
-        return None
-    gb = mem_bytes / (1024 * 1024 * 1024)
-    if gb < 1.0:
-        return 64
-    if gb < 2.0:
-        return 128
-    if gb < 4.0:
-        return 256
-    return 512
+# ---- (moved) resource detection helpers are integrated in training/resources.py ----
 
 
 def _run_once(payload_path: Path) -> int:
@@ -427,6 +365,7 @@ def _run_once(payload_path: Path) -> int:
         dj.process_train_job(obj)
     except (OSError, RuntimeError, ValueError, TypeError):
         # process_train_job is responsible for publishing failed; convert to non-zero exit
+        logging.getLogger("handwriting_ai").info("process_train_job_failed")
         return 1
     return 0
 
