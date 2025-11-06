@@ -45,6 +45,7 @@ def _start_worker(s: _RqSettings) -> int:
     try:
         ok = bool(getattr(conn, "ping", lambda: True)())
     except Exception:  # noqa: BLE001 - connection check only
+        logging.getLogger("handwriting_ai").info("redis_ping_failed")
         ok = False
     if not ok:
         raise RuntimeError("Failed to connect to Redis")
