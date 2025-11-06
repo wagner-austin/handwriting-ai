@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import io
 import math
+from bisect import bisect_left
 from dataclasses import dataclass
+from itertools import accumulate
 from typing import Final
 
 import torch
@@ -80,15 +82,10 @@ def _estimate_background_is_dark(gray: Image.Image) -> bool:
     total = sum(hist)
     if total == 0:
         return False
-    # median estimate from histogram
-    cum = 0
-    median_bin = 0
-    for i, count in enumerate(hist):
-        cum += count
-        if cum >= total // 2:
-            median_bin = i
-            break
-    return median_bin < 128
+    half = total // 2
+    csum = list(accumulate(hist))
+    median_bin = bisect_left(csum, half)
+    return int(median_bin) < 128
 
 
 def _otsu_binarize(gray: Image.Image) -> Image.Image:
@@ -101,11 +98,10 @@ def _otsu_binarize(gray: Image.Image) -> Image.Image:
     threshold = 0
     for t in range(256):
         w_b += hist[t]
-        if w_b == 0:
+        # Skip invalid partitions at the extremes
+        if w_b == 0 or w_b == total:
             continue
         w_f = total - w_b
-        if w_f == 0:
-            break
         sum_b += t * hist[t]
         m_b = sum_b / w_b
         m_f = (sum_total - sum_b) / w_f
