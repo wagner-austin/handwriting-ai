@@ -103,6 +103,8 @@ def test_real_run_training_injects_paths_and_aug(
     assert eff.dots_count == 3
     assert eff.dots_size_px == 2
     assert eff.progress_every_epochs >= 1
+    # Calibration is enabled by default on worker runs
+    assert eff.calibrate is True
 
 
 def test_real_run_training_respects_non_default_aug(
@@ -167,3 +169,24 @@ def test_real_run_training_no_aug_leaves_defaults(
     assert eff.dots_prob == 0.0
     assert eff.dots_count == 0
     assert eff.dots_size_px == 1
+
+
+def test_space_audit_reports_top_items(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    (root / "a").mkdir(parents=True, exist_ok=True)
+    (root / "b").mkdir(parents=True, exist_ok=True)
+    (root / "a" / "x.bin").write_bytes(b"0" * 100)
+    (root / "b" / "y.bin").write_bytes(b"0" * 200)
+    # Invoke audit helper directly
+    from scripts.worker import _compute_space_audit as audit
+    from scripts.worker import _format_space_audit as fmt
+
+    files, dirs = audit(root, n_files=2, n_dirs=2)
+    assert len(files) >= 2 and files[0][1] >= files[1][1]
+    # Directory b should rank at least as large as a
+    names = [p.name for p, _ in dirs]
+    assert "b" in names
+    # JSON-friendly formatting
+    payload = fmt(root, files, dirs)
+    assert payload.get("root") == root.as_posix()
+    assert isinstance(payload.get("top_files"), list) and isinstance(payload.get("top_dirs"), list)
