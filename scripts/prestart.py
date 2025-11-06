@@ -101,8 +101,14 @@ def seed_if_needed(plan: SeedPlan) -> bool:
 
 
 def _env_policy(val: str | None) -> SeedPolicy:
-    if val in {"always", "if_newer", "if_missing", "never"}:
-        return val  # type: ignore[return-value]
+    if val == "always":
+        return "always"
+    if val == "if_newer":
+        return "if_newer"
+    if val == "if_missing":
+        return "if_missing"
+    if val == "never":
+        return "never"
     return "if_missing"
 
 
