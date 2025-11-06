@@ -9,7 +9,6 @@ from typing import Final, Literal, Protocol, TypedDict
 
 from handwriting_ai.config import Settings
 from handwriting_ai.events import digits as ev
-from handwriting_ai.training.resources import detect_resource_limits
 from handwriting_ai.inference.manifest import ModelManifest
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
 from handwriting_ai.training.progress import (
@@ -21,6 +20,7 @@ from handwriting_ai.training.progress import (
 from handwriting_ai.training.progress import (
     set_epoch_emitter as _set_epoch_emitter,
 )
+from handwriting_ai.training.resources import detect_resource_limits
 
 DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
 
