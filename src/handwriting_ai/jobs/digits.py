@@ -138,6 +138,10 @@ def _build_cfg(payload: DigitsTrainJobV1) -> TrainConfig:
         augment=bool(payload["augment"]),
         aug_rotate=10.0,
         aug_translate=0.1,
+        noise_prob=0.15,
+        dots_prob=0.20,
+        dots_count=3,
+        dots_size_px=2,
     )
 
 
