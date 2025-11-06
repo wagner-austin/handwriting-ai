@@ -156,10 +156,17 @@ class FailureWatcher:
             self.store = _RedisProcessedStore(self.redis_url, key=key)
 
     def scan_once(self) -> None:
+        log = logging.getLogger("handwriting_ai")
         conn = _rq_connect(self.redis_url)
         q = _rq_queue(conn, self.queue_name)
         reg = _rq_failed_registry(q)
         job_ids: list[str] = reg.get_job_ids()
+        if job_ids:
+            log.info(
+                "rq_failure_watcher scan queue=%s failed_jobs=%d",
+                self.queue_name,
+                len(job_ids),
+            )
         for jid in job_ids:
             if not isinstance(jid, str):
                 continue
@@ -193,8 +200,16 @@ class FailureWatcher:
             pub = self.publisher
             try:
                 if pub is not None:
+                    log.info(
+                        "rq_failure_watcher publish jid=%s req=%s uid=%s model=%s",
+                        jid,
+                        request_id,
+                        int(user_id),
+                        model_id,
+                    )
                     pub.publish(self.events_channel, ev.encode_event(evt))
             finally:
+                log.info("rq_failure_watcher mark_processed jid=%s", jid)
                 st.mark(jid)
 
     def run_forever(self) -> None:  # pragma: no cover - loop integration tested via scan_once
