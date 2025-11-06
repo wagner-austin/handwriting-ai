@@ -178,34 +178,40 @@ def process_train_job(payload: dict[str, object]) -> None:
 
     ctx = _make_context()
 
-    # Publish versioned started event (include resource limits for richer UX)
-    _ctx = ev.Context(
-        request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
-    )
-    _limits = detect_resource_limits()
-    _mem_mb = (
-        int(_limits.memory_bytes // (1024 * 1024))
-        if isinstance(_limits.memory_bytes, int)
-        else None
-    )
-    _started_v1 = ev.started(
-        _ctx,
-        total_epochs=p["epochs"],
-        cpu_cores=int(_limits.cpu_cores),
-        memory_mb=_mem_mb,
-        optimal_threads=int(_limits.optimal_threads),
-        optimal_workers=int(_limits.optimal_workers),
-        max_batch_size=_limits.max_batch_size,
-        device="cpu",
-    )
-    try:
-        if ctx.publisher is not None:
-            ctx.publisher.publish(ctx.channel, ev.encode_event(_started_v1))
-    except (OSError, ValueError):
-        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
-
     try:
         cfg = _build_cfg(p)
+
+        # Publish versioned started event (include resource limits and augmentation for richer UX)
+        _ctx = ev.Context(
+            request_id=p["request_id"], user_id=p["user_id"], model_id=p["model_id"], run_id=None
+        )
+        _limits = detect_resource_limits()
+        _mem_mb = (
+            int(_limits.memory_bytes // (1024 * 1024))
+            if isinstance(_limits.memory_bytes, int)
+            else None
+        )
+        _started_v1 = ev.started(
+            _ctx,
+            total_epochs=p["epochs"],
+            cpu_cores=int(_limits.cpu_cores),
+            memory_mb=_mem_mb,
+            optimal_threads=int(_limits.optimal_threads),
+            optimal_workers=int(_limits.optimal_workers),
+            max_batch_size=_limits.max_batch_size,
+            device=cfg.device,
+            batch_size=cfg.batch_size,
+            augment=cfg.augment,
+            aug_rotate=cfg.aug_rotate,
+            aug_translate=cfg.aug_translate,
+            noise_prob=float(cfg.noise_prob),
+            dots_prob=float(cfg.dots_prob),
+        )
+        try:
+            if ctx.publisher is not None:
+                ctx.publisher.publish(ctx.channel, ev.encode_event(_started_v1))
+        except (OSError, ValueError):
+            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
         # Bridge training progress to events via a DI-safe emitter
         _em = _ProgressEmitter(
             publisher=ctx.publisher,

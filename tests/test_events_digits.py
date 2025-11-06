@@ -17,6 +17,12 @@ def test_encode_all_event_builders_cover_fields() -> None:
         optimal_workers=0,
         max_batch_size=64,
         device="cpu",
+        batch_size=32,
+        augment=False,
+        aug_rotate=10.0,
+        aug_translate=0.1,
+        noise_prob=0.0,
+        dots_prob=0.0,
     )
     assert s["type"] == "digits.train.started.v1"
     assert s["total_epochs"] == 2

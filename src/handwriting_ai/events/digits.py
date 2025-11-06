@@ -20,6 +20,12 @@ class StartedV1(TypedDict):
     optimal_workers: int
     max_batch_size: int | None
     device: str
+    batch_size: int
+    augment: bool
+    aug_rotate: float
+    aug_translate: float
+    noise_prob: float
+    dots_prob: float
 
 
 class BatchV1(TypedDict):
@@ -156,6 +162,12 @@ def started(
     optimal_workers: int,
     max_batch_size: int | None,
     device: str,
+    batch_size: int,
+    augment: bool,
+    aug_rotate: float,
+    aug_translate: float,
+    noise_prob: float,
+    dots_prob: float,
 ) -> StartedV1:
     return {
         "type": "digits.train.started.v1",
@@ -171,6 +183,12 @@ def started(
         "optimal_workers": int(optimal_workers),
         "max_batch_size": (int(max_batch_size) if max_batch_size is not None else None),
         "device": str(device),
+        "batch_size": int(batch_size),
+        "augment": bool(augment),
+        "aug_rotate": float(aug_rotate),
+        "aug_translate": float(aug_translate),
+        "noise_prob": float(noise_prob),
+        "dots_prob": float(dots_prob),
     }
 
 

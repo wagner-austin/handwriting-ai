@@ -94,6 +94,15 @@ def _run_training_loop(
     return best_sd, float(best_val)
 
 
+def _configure_interop_threads(interp_threads: int | None) -> None:
+    # Best-effort; environment may have already started parallel work
+    if hasattr(torch, "set_num_interop_threads") and interp_threads is not None:
+        try:
+            torch.set_num_interop_threads(int(interp_threads))
+        except RuntimeError as exc:
+            logging.getLogger("handwriting_ai").info("set_num_interop_threads_failed msg=%s", exc)
+
+
 def make_loaders(
     train_base: MNISTLike, test_base: MNISTLike, cfg: TrainConfig
 ) -> tuple[
@@ -147,12 +156,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     ec, limits = build_effective_config(cfg)
     # Set interop threads once before any parallel work.
     # Calibration varies only intra/loader/batch; interop remains fixed.
-    if hasattr(torch, "set_num_interop_threads") and ec.interop_threads is not None:
-        # Best-effort; environment may have already started parallel work
-        try:
-            torch.set_num_interop_threads(int(ec.interop_threads))
-        except RuntimeError as exc:
-            logging.getLogger("handwriting_ai").info("set_num_interop_threads_failed msg=%s", exc)
+    _configure_interop_threads(ec.interop_threads)
     # Always run empirical preflight calibration to avoid heuristic drift.
     cache_path = Path("artifacts") / "calibration.json"
     ttl_s = 7 * 24 * 60 * 60
@@ -234,6 +238,7 @@ __all__ = [
     "TrainConfig",
     "MNISTLike",
     "TrainableModel",
+    "_configure_interop_threads",
     "_apply_affine",
     "_ensure_image",
     "_set_seed",
