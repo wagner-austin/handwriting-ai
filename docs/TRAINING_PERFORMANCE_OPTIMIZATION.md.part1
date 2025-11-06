@@ -1,0 +1,250 @@
+# Training Performance Optimization — Design and Implementation Plan
+
+Status: ready to implement
+Audience: handwriting-ai maintainers
+Principles: type safety, DRY, modular, observable, zero quick fixes
+
+## Executive Summary
+
+Current training performance: **16 minutes per epoch** (unacceptable)
+Target performance: **2-4 minutes per epoch** (6-10x speedup)
+Root causes: synchronous data loading, excessive thread contention, unoptimized configuration
+
+This document proposes a complete, type-safe solution to optimize training performance without introducing tech debt or configuration drift.
+
+---
+
+## Problem Statement
+
+### Current Performance Profile
+
+**Observed metrics (1 epoch, 60k samples, batch_size=256):**
+- Total time: 16 minutes (960 seconds)
+- Batches: 234 (60000 / 256)
+- Time per batch: ~4.1 seconds
+- Samples per second: ~15-30 (extremely low)
+
+**Expected performance (CPU ResNet-18 with augmentation):**
+- Time per batch: ~0.5-1 second
+- Samples per second: 100-200
+- Total epoch time: 2-4 minutes
+
+**Impact:**
+- Poor user experience (16+ minute wait for `/train` command)
+- Inefficient resource utilization (48 cores underutilized)
+- Blocks iterative model development
+
+---
+
+## Root Cause Analysis
+
+### Issue 1: Synchronous Data Loading (`num_workers=0`)
+
+**Location:** `src/handwriting_ai/training/dataset.py:152-156`
+
+**Current code:**
+```python
+train_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
+    train_ds, batch_size=cfg.batch_size, shuffle=True, num_workers=0
+)
+test_loader: DataLoader[tuple[Tensor, Tensor]] = DataLoader(
+    test_ds, batch_size=cfg.batch_size, shuffle=False, num_workers=0
+)
+```
+
+**Problem:** All data loading and augmentation happens in the main training thread:
+1. Model forward pass completes
+2. Thread blocks waiting for next batch
+3. Data loader runs augmentation pipeline (rotate, noise, dots, blur, morph, preprocess)
+4. Batch finally ready, training resumes
+5. Repeat (CPU sits idle 70-80% of the time)
+
+**Augmentation overhead per sample:**
+- `ensure_l_mode()`: PIL color conversion
+- `apply_affine()`: Rotation + translation (expensive affine transform)
+- `maybe_add_noise()`: Random salt/pepper noise
+- `maybe_add_dots()`: Random dot injection
+- `maybe_blur()`: Gaussian blur
+- `maybe_morph()`: Erosion/dilation morphology
+- `run_preprocess()`: Center + normalize
+
+**Impact:** Training loop is I/O bound instead of compute bound.
+
+---
+
+### Issue 2: Excessive Thread Contention
+
+**Location:** `scripts/worker.py:126`, `scripts/worker.py:360-383`
+
+**Current code:**
+```python
+if getattr(cfg, "threads", 0) <= 0:
+    cfg = replace(cfg, threads=_detect_cpu_threads())
+```
+
+**Thread detection logic:**
+```python
+def _detect_cpu_threads() -> int:
+    # Tries cgroup limits, falls back to:
+    return max(1, os.cpu_count() or 1)  # Returns 48 on Railway
+```
+
+**Problem:** PyTorch + OpenMP create 48 intra-op threads + 24 inter-op threads = 72+ threads competing for CPU time.
+
+**Why this is bad:**
+- Context switching overhead
+- Cache thrashing
+- Lock contention in BLAS libraries
+- Diminishing returns beyond 8-12 threads for most workloads
+
+**Optimal threading for CPU inference:**
+- Intra-op threads: 4-8 (matrix operations)
+- Inter-op threads: 2-4 (parallel operations)
+- Data loader workers: 2-4 (I/O parallelism)
+- Total: 8-16 threads (not 72+)
+
+---
+
+### Issue 3: No Configuration Validation
+
+**Locations:** Multiple files, no centralized validation
+
+**Problem:** Configuration values propagate without bounds checking:
+- `batch_size` can exceed memory limits
+- `threads` can be set to unrealistic values
+- `num_workers` hardcoded to 0 (no override mechanism)
+
+**Missing safeguards:**
+- No validation that `threads <= cpu_count`
+- No memory-aware batch size capping (exists in worker.py but not uniformly applied)
+- No warnings when configuration is suboptimal
+
+---
+
+## Design Principles
+
+### 1. Type Safety (No Any, No Casts)
+
+All configuration must be strongly typed with explicit validation:
+
+```python
+# ✅ Good: Explicit types and validation
+def _validate_threads(value: int, max_threads: int) -> int:
+    """Validate and cap thread count to prevent contention."""
+    if not isinstance(value, int):
+        raise TypeError(f"threads must be int, got {type(value)}")
+    if value < 0:
+        raise ValueError(f"threads must be >= 0, got {value}")
+    return min(value, max_threads)
+
+# ❌ Bad: Implicit coercion, no validation
+threads = int(cfg.threads) if cfg.threads else 0
+```
+
+### 2. DRY: Single Source of Truth
+
+Resource limits should be computed once and reused:
+
+```python
+# ✅ Good: Centralized resource detection
+@dataclass(frozen=True)
+class ResourceLimits:
+    """Detected container resource limits (immutable)."""
+    cpu_cores: int
+    memory_bytes: int | None
+    optimal_threads: int
+    optimal_workers: int
+
+def detect_resource_limits() -> ResourceLimits:
+    """Single source of truth for resource detection."""
+    ...
+
+# ❌ Bad: Scattered detection logic
+# - _detect_cpu_threads() in worker.py
+# - _mem_limit_bytes() in worker.py
+# - No coordination between detection sites
+```
+
+### 3. Modular: Separate Concerns
+
+**DataLoader configuration** should be separate from **training configuration**:
+
+```python
+# ✅ Good: Separate concerns
+@dataclass(frozen=True)
+class DataLoaderConfig:
+    """Configuration for PyTorch DataLoader (immutable)."""
+    batch_size: int
+    num_workers: int
+    pin_memory: bool
+    persistent_workers: bool
+    prefetch_factor: int
+
+def build_data_loader_config(
+    batch_size: int, resources: ResourceLimits
+) -> DataLoaderConfig:
+    """Build optimal DataLoader config from resources."""
+    ...
+
+# ❌ Bad: Mixed concerns
+# DataLoader params hardcoded in dataset.py
+# Thread config in worker.py
+# Batch size in multiple places
+```
+
+### 4. Observable: Log All Decisions
+
+Every configuration decision must be logged for debugging:
+
+```python
+# ✅ Good: Observable decisions
+log.info(
+    f"dataloader_config "
+    f"batch_size={cfg.batch_size} "
+    f"num_workers={cfg.num_workers} "
+    f"persistent_workers={cfg.persistent_workers}"
+)
+
+# ❌ Bad: Silent defaults
+train_loader = DataLoader(..., num_workers=0)
+```
+
+### 5. No Quick Fixes
+
+**Reject:**
+- Environment variable hacks (`export NUM_WORKERS=4`)
+- Magic number constants (`OPTIMAL_THREADS = 8`)
+- Hardcoded overrides
+
+**Require:**
+- Proper abstractions (ResourceLimits, DataLoaderConfig)
+- Runtime detection with validation
+- Configurable via Settings with sensible defaults
+- Full test coverage
+
+---
+
+## Proposed Solution
+
+### Phase 1: Resource Detection Module
+
+**Create:** `src/handwriting_ai/training/resources.py`
+
+**Purpose:** Centralized resource detection with type safety
+
+```python
+"""Container resource detection and optimization."""
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Final
+
+_LOGGER: Final = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ResourceLimits:
+    """Detected container resource limits.
