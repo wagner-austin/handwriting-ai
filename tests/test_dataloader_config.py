@@ -93,3 +93,19 @@ def test_make_loaders_with_loader_cfg(tmp_path: Path) -> None:
     assert train_loader.batch_size == 2
     assert test_loader.batch_size == 2
     assert train_loader.num_workers == 0 and test_loader.num_workers == 0
+
+
+def test_make_loaders_with_workers_positive(tmp_path: Path) -> None:
+    cfg = _cfg(tmp_path)
+    train_base = _TinyBase()
+    test_base = _TinyBase()
+    lc = DataLoaderConfig(
+        batch_size=2,
+        num_workers=1,
+        pin_memory=False,
+        persistent_workers=True,
+        prefetch_factor=2,
+    )
+    _, train_loader, test_loader = make_loaders(train_base, test_base, cfg, lc)
+    assert train_loader.batch_size == 2 and test_loader.batch_size == 2
+    assert train_loader.num_workers == 1 and test_loader.num_workers == 1
