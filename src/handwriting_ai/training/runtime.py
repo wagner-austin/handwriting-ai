@@ -45,11 +45,5 @@ def build_effective_config(cfg: _TrainCfgProto) -> tuple[EffectiveConfig, Resour
 
 
 def apply_threads(ec: EffectiveConfig) -> None:
+    # Apply intra-op threads post-calibration; interop is set once before any parallel work
     torch.set_num_threads(int(ec.intra_threads))
-    if hasattr(torch, "set_num_interop_threads") and ec.interop_threads is not None:
-        try:
-            torch.set_num_interop_threads(int(ec.interop_threads))
-        except RuntimeError as e:
-            import logging as _logging
-
-            _logging.getLogger("handwriting_ai").info(f"set_num_interop_threads_failed msg={e!s}")

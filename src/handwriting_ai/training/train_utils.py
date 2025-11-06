@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 from typing import Protocol
 
 import torch
@@ -42,8 +41,4 @@ def _configure_threads(cfg: _CfgThreads) -> None:
     threads = int(cfg.threads)
     if threads > 0:
         torch.set_num_threads(threads)
-        if hasattr(torch, "set_num_interop_threads"):
-            try:
-                torch.set_num_interop_threads(max(1, threads // 2))
-            except RuntimeError:
-                logging.getLogger("handwriting_ai").info("set_num_interop_threads_failed")
+        # Interop threads are set once early by the training runtime; avoid re-setting here

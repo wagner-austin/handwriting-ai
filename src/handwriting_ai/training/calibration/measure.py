@@ -70,12 +70,8 @@ def _safe_loader(
 
 
 def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> CalibrationResult:
+    # Apply only intra-op threads; interop is set once before calibration
     torch.set_num_threads(int(cand.intra_threads))
-    if cand.interop_threads is not None and hasattr(torch, "set_num_interop_threads"):
-        from contextlib import suppress as _suppress
-
-        with _suppress(RuntimeError):
-            torch.set_num_interop_threads(int(cand.interop_threads))
 
     bs_try = max(1, int(cand.batch_size))
     sps: float = 0.0

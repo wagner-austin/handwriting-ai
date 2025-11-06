@@ -143,8 +143,16 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     log = get_logger()
     _set_seed(cfg.seed)
     device = torch.device(cfg.device)
-    # Compute and apply effective configuration
+    # Compute initial effective configuration
     ec, limits = build_effective_config(cfg)
+    # Set interop threads once before any parallel work.
+    # Calibration varies only intra/loader/batch; interop remains fixed.
+    if hasattr(torch, "set_num_interop_threads") and ec.interop_threads is not None:
+        # Best-effort; environment may have already started parallel work
+        try:
+            torch.set_num_interop_threads(int(ec.interop_threads))
+        except RuntimeError as exc:
+            logging.getLogger("handwriting_ai").info("set_num_interop_threads_failed msg=%s", exc)
     # Always run empirical preflight calibration to avoid heuristic drift.
     cache_path = Path("artifacts") / "calibration.json"
     ttl_s = 7 * 24 * 60 * 60
