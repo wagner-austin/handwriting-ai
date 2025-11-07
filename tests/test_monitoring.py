@@ -45,7 +45,8 @@ def test_get_memory_stats(monkeypatch: pytest.MonkeyPatch) -> None:
     assert stats.rss_mb == 150
     assert int(stats.total_mb) == 4096
     assert int(stats.available_mb) == 3072
-    assert abs(stats.percent - 12.5) < 1e-6
+    # Percent reports fallback virtual memory percent when cgroup limit is unavailable
+    assert abs(stats.percent - 25.0) < 1e-6
 
 
 def test_log_memory_stats_and_pressure(monkeypatch: pytest.MonkeyPatch) -> None:
