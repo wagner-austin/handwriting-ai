@@ -36,6 +36,7 @@ redis = "^5.0.0"
 rq = "^1.16.0"
 httpx = "^0.27.2"
 threadpoolctl = "^3.5.0"
+psutil = "^6.1.0"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.2"
@@ -44,6 +45,7 @@ mypy = "^1.11.2"
 ruff = "^0.6.5"
 black = "^24.10.0"
 yamllint = "^1.37.1"
+types-psutil = "^6.0.0"
 
 [tool.ruff]
 line-length = 100
@@ -136,4 +138,18 @@ disallow_untyped_calls = false
 check_untyped_defs = false
 warn_return_any = false
 
-
+[[tool.mypy.overrides]]
+module = [
+  "handwriting_ai.monitoring",
+  "tests.test_training_memory_logging",
+]
+ignore_missing_imports = true
+disallow_any_unimported = false
+disallow_any_expr = false
+disallow_any_generics = false
+disallow_any_decorated = false
+disallow_any_explicit = false
+disallow_untyped_defs = false
+disallow_untyped_calls = false
+check_untyped_defs = false
+warn_return_any = false
