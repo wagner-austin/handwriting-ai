@@ -32,8 +32,11 @@ def test_rq_worker_patches_training_and_calls_work(
             created["queue_name"] = name
 
     class _Worker:
-        def __init__(self, queues: list[_Queue]) -> None:
+        def __init__(self, queues: list[_Queue], **kwargs: object) -> None:
             created["worker_init"] = True
+            # Ensure handler wiring is passed
+            handlers = kwargs.get("exception_handlers")
+            created["has_handlers"] = bool(handlers)
 
         def work(self) -> bool:  # pragma: no cover - simple boolean path
             created["worked"] = True
