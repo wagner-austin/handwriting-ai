@@ -28,6 +28,14 @@ class _TrainCfgProto(Protocol):
 def build_effective_config(cfg: _TrainCfgProto) -> tuple[EffectiveConfig, ResourceLimits]:
     limits = detect_resource_limits()
     eff_threads = int(cfg.threads) if int(cfg.threads) > 0 else int(limits.optimal_threads)
+    # Clamp threads further under low-memory conditions to reduce allocator pressure
+    mem_b = limits.memory_bytes
+    if isinstance(mem_b, int):
+        gb = mem_b / (1024 * 1024 * 1024)
+        if gb < 2.0:
+            eff_threads = min(eff_threads, 2)
+        elif gb < 4.0:
+            eff_threads = min(eff_threads, 4)
     eff_intra = eff_threads
     eff_inter = max(1, eff_intra // 2) if hasattr(torch, "set_num_interop_threads") else None
     eff_batch = int(cfg.batch_size)
