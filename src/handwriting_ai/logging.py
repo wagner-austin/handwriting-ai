@@ -218,14 +218,29 @@ def _is_float_str(s: str) -> bool:
 LogStyle = Literal["json", "pretty", "auto"]
 
 
+def _env_level() -> int:
+    v = os.environ.get("HANDWRITING_LOG_LEVEL")
+    if not v:
+        return logging.INFO
+    m = v.strip().upper()
+    return {
+        "DEBUG": logging.DEBUG,
+        "INFO": logging.INFO,
+        "WARNING": logging.WARNING,
+        "ERROR": logging.ERROR,
+        "CRITICAL": logging.CRITICAL,
+    }.get(m, logging.INFO)
+
+
 def init_logging(style: LogStyle = "auto") -> logging.Logger:
     logger = logging.getLogger(_LOGGER_NAME)
-    logger.setLevel(logging.INFO)
+    lvl = _env_level()
+    logger.setLevel(lvl)
     # Avoid duplicate handlers if called multiple times (tests/process reuse)
     if not _has_stream_handler(logger):
         handler = logging.StreamHandler(stream=sys.stdout)
         handler.setFormatter(_choose_formatter(style))
-        handler.setLevel(logging.INFO)
+        handler.setLevel(lvl)
         logger.addHandler(handler)
         logger.propagate = False
     return logger
