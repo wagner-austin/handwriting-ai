@@ -33,11 +33,11 @@ def _candidate_workers(limits: ResourceLimits) -> list[int]:
         return [0]
     # Base bound by cores to keep search compact
     upper_by_cores = min(2, cores)
-    # Memory-aware bound: on sub-1.2 GiB environments, avoid exploring >1 worker
+    # Memory-aware bound: on sub-2 GiB environments, avoid exploring >0 workers
     upper_by_mem = upper_by_cores
     mem = limits.memory_bytes
-    if mem is not None and mem < int(1.2 * 1024 * 1024 * 1024):
-        upper_by_mem = min(1, upper_by_cores)
+    if mem is not None and mem < int(2 * 1024 * 1024 * 1024):
+        upper_by_mem = 0
     upper = min(upper_by_cores, upper_by_mem)
     return list(range(0, upper + 1))
 
