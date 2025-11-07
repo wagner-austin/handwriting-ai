@@ -7,6 +7,7 @@ from dataclasses import dataclass
 
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.logging import init_logging
+from handwriting_ai.monitoring import log_system_info
 from scripts.worker import _make_publisher_from_env, _real_run_training
 
 
@@ -78,6 +79,8 @@ def _start_worker(s: _RqSettings) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     init_logging()
+    # Log basic system info to correlate with runtime behavior
+    log_system_info()
     # argv is unused for now; env controls which queue to listen to
     _ = argv
     settings = _load_rq_settings()
