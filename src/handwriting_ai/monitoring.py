@@ -15,17 +15,45 @@ class MemoryStats:
     total_mb: int
 
 
+def _cgroup_memory_limit_bytes() -> int | None:
+    """Return container memory limit in bytes if available (cgroup), else None.
+
+    Uses the training.resources helper if present to avoid duplicating logic.
+    """
+    try:
+        from handwriting_ai.training.resources import _detect_memory_limit_bytes as _mem_lim
+
+        return _mem_lim()
+    except (ImportError, AttributeError) as _exc:
+        # Log once at debug level to satisfy guard without noise
+        import logging as _logging
+
+        _logging.getLogger("handwriting_ai").debug("mem_limit_detect_unavailable %s", _exc)
+        return None
+
+
+def _compute_pressure_percent(rss_bytes: int, fallback_vm_percent: float) -> float:
+    limit = _cgroup_memory_limit_bytes()
+    if isinstance(limit, int) and limit > 0:
+        pct = (float(rss_bytes) / float(limit)) * 100.0
+        return max(0.0, min(pct, 1000.0))
+    return float(fallback_vm_percent)
+
+
 def get_memory_stats() -> MemoryStats:
     """Return current process and system memory statistics.
 
-    Uses psutil without optional imports or try/except so types remain strict.
+    Computes percent against cgroup memory limit when available; otherwise uses
+    psutil's system-wide virtual memory percent.
     """
     proc = psutil.Process()
     mem_info = proc.memory_info()
     sys_mem = psutil.virtual_memory()
+    rss_mb = int(mem_info.rss // (1024 * 1024))
+    percent = _compute_pressure_percent(int(mem_info.rss), float(sys_mem.percent))
     return MemoryStats(
-        rss_mb=int(mem_info.rss // (1024 * 1024)),
-        percent=float(proc.memory_percent()),
+        rss_mb=rss_mb,
+        percent=float(percent),
         available_mb=int(sys_mem.available // (1024 * 1024)),
         total_mb=int(sys_mem.total // (1024 * 1024)),
     )
@@ -43,9 +71,11 @@ def log_memory_stats(*, context: str = "") -> None:
 
 
 def check_memory_pressure(threshold_percent: float = 90.0) -> bool:
-    """Return True if system memory usage exceeds threshold percent."""
+    """Return True if memory usage exceeds threshold; prefer cgroup limit percent."""
     vm = psutil.virtual_memory()
-    return float(vm.percent) >= float(threshold_percent)
+    proc = psutil.Process()
+    pct = _compute_pressure_percent(int(proc.memory_info().rss), float(vm.percent))
+    return float(pct) >= float(threshold_percent)
 
 
 def log_system_info() -> None:
