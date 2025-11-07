@@ -101,7 +101,12 @@ else:  # pragma: no cover - runtime only
     def _rq_connect(url: str):
         import redis
 
-        return redis.Redis.from_url(url, decode_responses=False)
+        return redis.Redis.from_url(
+            url,
+            decode_responses=False,
+            socket_connect_timeout=5.0,
+            socket_timeout=10.0,
+        )
 
     def _rq_queue(conn, name):
         import rq
@@ -161,12 +166,12 @@ class FailureWatcher:
         q = _rq_queue(conn, self.queue_name)
         reg = _rq_failed_registry(q)
         job_ids: list[str] = reg.get_job_ids()
-        if job_ids:
-            log.info(
-                "rq_failure_watcher scan queue=%s failed_jobs=%d",
-                self.queue_name,
-                len(job_ids),
-            )
+        # Always log scan activity to diagnose silent failures
+        log.info(
+            "rq_failure_watcher scan queue=%s failed_jobs=%d",
+            self.queue_name,
+            len(job_ids),
+        )
         for jid in job_ids:
             if not isinstance(jid, str):
                 continue
