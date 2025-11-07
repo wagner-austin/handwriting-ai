@@ -70,6 +70,10 @@ def train_epoch(
         if batch_idx % log_every == 0:
             log.debug("train_step")
         optimizer.step()
+        # Proactive memory guard: check every batch (not only on log cadence)
+        if on_batch_check():
+            log.info("mem_guard_abort e=%s b=%s", ep, (batch_idx + 1))  # pragma: no cover
+            raise RuntimeError("memory_pressure_guard_triggered")  # pragma: no cover
         total += y.size(0)
         loss_sum += float(loss.item()) * y.size(0)
         if batch_idx % log_every == 0:
@@ -89,10 +93,6 @@ def train_epoch(
                 f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f} "
                 f"rss_mb={mem.rss_mb} mem_pct={mem.percent:.1f} mem_pressure={press}"
             )
-            # Proactive memory guard: abort if sustained pressure observed
-            if on_batch_check():
-                log.info("mem_guard_abort e=%s b=%s", ep, (batch_idx + 1))  # pragma: no cover
-                raise RuntimeError("memory_pressure_guard_triggered")  # pragma: no cover
             _emit_batch(
                 epoch=ep,
                 total_epochs=ep_total,
