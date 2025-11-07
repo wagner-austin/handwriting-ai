@@ -9,8 +9,10 @@ from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
 from handwriting_ai.logging import get_logger
+from handwriting_ai.monitoring import check_memory_pressure, get_memory_stats
 
 from .progress import emit_batch as _emit_batch
+from .safety import on_batch_check
 
 
 class _TrainableModel(Protocol):
@@ -77,12 +79,20 @@ def train_epoch(
                 batch_acc = float((preds == y).float().mean().item())
             dt = _time.perf_counter() - t0
             ips = (int(y.size(0)) / dt) if dt > 0 else 0.0
+            mem = get_memory_stats()
+            pressed = check_memory_pressure()
+            press = "true" if pressed else "false"
             log.info(
                 f"train_batch_done epoch={ep}/{ep_total} "
                 f"batch={batch_idx+1}/{total_batches} "
                 f"batch_loss={float(loss.item()):.4f} batch_acc={batch_acc:.4f} "
-                f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f}"
+                f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f} "
+                f"rss_mb={mem.rss_mb} mem_pct={mem.percent:.1f} mem_pressure={press}"
             )
+            # Proactive memory guard: abort if sustained pressure observed
+            if on_batch_check():
+                log.info("mem_guard_abort e=%s b=%s", ep, (batch_idx + 1))  # pragma: no cover
+                raise RuntimeError("memory_pressure_guard_triggered")  # pragma: no cover
             _emit_batch(
                 epoch=ep,
                 total_epochs=ep_total,
