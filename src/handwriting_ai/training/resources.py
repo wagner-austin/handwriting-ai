@@ -88,10 +88,23 @@ def _compute_optimal_threads(cores: int) -> int:
     return min(8, c)
 
 
-def _compute_optimal_workers(cores: int) -> int:
+def _compute_optimal_workers(cores: int, memory_bytes: int | None) -> int:
+    """Choose DataLoader workers based on both CPU and memory.
+
+    Conservative defaults to avoid OOM in small containers:
+    - < 2 GB: 0 workers (main process loading)
+    - < 4 GB: 1 worker
+    - >= 4 GB: up to 2 workers, bounded by cores // 2
+    """
     c = max(1, int(cores))
-    if c <= 2:
+    if memory_bytes is None:
+        # Fall back to CPU-based heuristic
+        return 0 if c <= 2 else min(2, c // 2)
+    gb = memory_bytes / (1024 * 1024 * 1024)
+    if gb < 2.0:
         return 0
+    if gb < 4.0:
+        return 1 if c >= 2 else 0
     return min(2, c // 2)
 
 
@@ -99,7 +112,7 @@ def detect_resource_limits() -> ResourceLimits:
     cpu_cores = _detect_cpu_cores()
     mem_bytes = _detect_memory_limit_bytes()
     optimal_threads = _compute_optimal_threads(cpu_cores)
-    optimal_workers = _compute_optimal_workers(cpu_cores)
+    optimal_workers = _compute_optimal_workers(cpu_cores, mem_bytes)
     max_bs = compute_max_batch_size(mem_bytes)
     log = get_logger()
     mem_mb = int(mem_bytes // (1024 * 1024)) if isinstance(mem_bytes, int) else None
