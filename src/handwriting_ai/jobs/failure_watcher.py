@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from typing import Protocol as _Protocol
@@ -103,7 +104,7 @@ else:  # pragma: no cover - runtime only
 
         return redis.Redis.from_url(
             url,
-            decode_responses=False,
+            decode_responses=True,
             socket_connect_timeout=5.0,
             socket_timeout=10.0,
         )
@@ -165,7 +166,7 @@ class FailureWatcher:
         conn = _rq_connect(self.redis_url)
         q = _rq_queue(conn, self.queue_name)
         reg = _rq_failed_registry(q)
-        job_ids: list[str] = reg.get_job_ids()
+        job_ids = _coerce_job_ids(reg.get_job_ids())
         # Always log scan activity to diagnose silent failures
         log.info(
             "rq_failure_watcher scan queue=%s failed_jobs=%d",
@@ -231,6 +232,20 @@ class FailureWatcher:
             except (RuntimeError, ValueError, TypeError, OSError) as e:
                 logging.getLogger("handwriting_ai").info("rq_failure_watcher_scan_error %s", e)
             time.sleep(max(0.1, float(self.poll_interval_s)))
+
+
+def _coerce_job_ids(items: Sequence[object]) -> list[str]:
+    out: list[str] = []
+    for it in items:
+        if isinstance(it, str):
+            out.append(it)
+        elif isinstance(it, bytes):
+            try:
+                out.append(it.decode("utf-8"))
+            except UnicodeDecodeError as exc:
+                logging.getLogger("handwriting_ai").debug("jid_decode_failed %s", exc)
+                continue
+    return out
 
 
 def run_from_env() -> None:
