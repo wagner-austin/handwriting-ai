@@ -42,12 +42,18 @@ def build_effective_config(cfg: _TrainCfgProto) -> tuple[EffectiveConfig, Resour
     if limits.max_batch_size is not None and eff_batch > int(limits.max_batch_size):
         eff_batch = int(limits.max_batch_size)
 
+    # Reduce prefetch under low-memory conditions to minimize steady RSS pressure
+    prefetch = 2
+    if isinstance(mem_b, int):
+        gb2 = mem_b / (1024 * 1024 * 1024)
+        if gb2 < 2.0:
+            prefetch = 1
     loader_cfg = DataLoaderConfig(
         batch_size=eff_batch,
         num_workers=int(limits.optimal_workers),
         pin_memory=False,
         persistent_workers=bool(limits.optimal_workers > 0),
-        prefetch_factor=2,
+        prefetch_factor=prefetch,
     )
     return EffectiveConfig(eff_intra, eff_inter, eff_batch, loader_cfg), limits
 
