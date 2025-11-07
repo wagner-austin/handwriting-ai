@@ -10,6 +10,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 from handwriting_ai.logging import get_logger, init_logging
+from handwriting_ai.monitoring import log_system_info
 
 from .artifacts import write_artifacts as _write_artifacts_impl
 from .calibrate import calibrate_input_pipeline
@@ -20,7 +21,9 @@ from .progress import emit_best as _emit_best
 from .progress import emit_epoch as _emit_epoch
 from .progress import emit_progress as _emit_progress
 from .progress import set_progress_emitter as _set_progress_emitter
+from .resources import ResourceLimits
 from .runtime import apply_threads, build_effective_config
+from .safety import MemoryGuardConfig, reset_memory_guard, set_memory_guard_config
 from .train_config import TrainConfig
 from .train_types import MNISTLike, TrainableModel
 from .train_utils import _apply_affine, _build_model, _configure_threads, _ensure_image, _set_seed
@@ -50,6 +53,8 @@ def _run_training_loop(
     import time as _time
 
     for ep in range(1, cfg.epochs + 1):
+        # Reset consecutive memory guard at epoch boundary
+        reset_memory_guard()
         t0 = _time.perf_counter()
         log.info(f"epoch_start_{ep}_{cfg.epochs}")
         train_loss = _train_epoch(
@@ -149,6 +154,8 @@ def _train_epoch(
 def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> Path:
     # Ensure logger is initialized for scripts/CLI contexts
     init_logging()
+    # Surface system info at training start for diagnostics
+    log_system_info()
     log = get_logger()
     _set_seed(cfg.seed)
     device = torch.device(cfg.device)
@@ -170,6 +177,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
         force=bool(cfg.force_calibration),
     )
     apply_threads(ec)
+    _configure_memory_guard_from_limits(cfg, limits)
     # Log threading and device configuration
     intra = torch.get_num_threads()
     interop = torch.get_num_interop_threads() if hasattr(torch, "get_num_interop_threads") else None
@@ -234,10 +242,28 @@ def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
     _set_progress_emitter(emitter)
 
 
+def _configure_memory_guard_from_limits(cfg: TrainConfig, limits: ResourceLimits) -> None:
+    # Configure memory guard from limits + cfg toggle
+    mg_enabled = bool(cfg.memory_guard)
+    thr = float(cfg.mem_guard_threshold_pct)
+    req = max(1, int(cfg.mem_guard_required_checks))
+    # Be more conservative on very small memory limits
+    if isinstance(limits.memory_bytes, int):
+        gb = limits.memory_bytes / (1024 * 1024 * 1024)
+        if gb < 2.0:
+            mg_enabled = True
+            thr = min(thr, 95.0)
+            req = max(req, 3)
+    set_memory_guard_config(
+        MemoryGuardConfig(enabled=mg_enabled, threshold_percent=thr, required_consecutive=req)
+    )
+
+
 __all__ = [
     "TrainConfig",
     "MNISTLike",
     "TrainableModel",
+    "_configure_memory_guard_from_limits",
     "_configure_interop_threads",
     "_apply_affine",
     "_ensure_image",
