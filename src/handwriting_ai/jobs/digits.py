@@ -21,6 +21,7 @@ from handwriting_ai.training.progress import (
     set_epoch_emitter as _set_epoch_emitter,
 )
 from handwriting_ai.training.resources import detect_resource_limits
+from handwriting_ai.training.safety import get_memory_guard_config as _get_mg_cfg
 
 DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
 
@@ -156,6 +157,25 @@ class _Context:
     channel: str
 
 
+def _summarize_training_exception(exc: BaseException) -> str:
+    # Memory guard specific message
+    if isinstance(exc, RuntimeError) and str(exc) == "memory_pressure_guard_triggered":
+        mg = _get_mg_cfg()
+        thr = float(mg.threshold_percent)
+        return (
+            f"Training aborted due to sustained memory pressure (>= {thr:.1f}%). "
+            "Reduce batch size or DataLoader workers and retry."
+        )
+    # Artifact upload error surfaced from worker
+    if isinstance(exc, RuntimeError) and "artifact upload failed" in str(exc):
+        return "Artifact upload failed: upstream API error. See worker logs for details."
+    # Generic: include type and message for clarity
+    name = exc.__class__.__name__
+    msg = str(exc)
+    preview = msg[:300]
+    return f"{name}: {preview}" if preview else name
+
+
 def process_train_job(payload: dict[str, object]) -> None:
     typ = payload.get("type") if isinstance(payload, dict) else None
     if typ != "digits.train.v1":
@@ -262,8 +282,8 @@ def process_train_job(payload: dict[str, object]) -> None:
                 ctx.publisher.publish(ctx.channel, ev.encode_event(_comp))
         except (OSError, ValueError):
             logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
-    except (OSError, RuntimeError, ValueError, TypeError):
-        _emit_failed(payload, "system", "system error")
+    except (OSError, RuntimeError, ValueError, TypeError) as exc:
+        _emit_failed(payload, "system", _summarize_training_exception(exc))
         raise
     finally:
         # Ensure emitter cleared to avoid cross-job leakage in long-lived workers
