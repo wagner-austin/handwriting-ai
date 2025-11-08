@@ -76,7 +76,7 @@ def train_epoch(
             raise RuntimeError("memory_pressure_guard_triggered")  # pragma: no cover
         total += y.size(0)
         loss_sum += float(loss.item()) * y.size(0)
-        if batch_idx % log_every == 0:
+        if (batch_idx % log_every == 0) or (batch_idx + 1 == total_batches):
             avg_loss = loss_sum / total if total > 0 else 0.0
             with torch.no_grad():
                 preds = logits.argmax(dim=1)
