@@ -84,3 +84,24 @@ def test_failed_message_for_memory_guard_includes_threshold(
     assert isinstance(m2, str)
     assert "memory pressure" in m2.lower()
     assert "88.0" in m2
+
+
+def test_failed_message_for_artifact_upload(monkeypatch: pytest.MonkeyPatch) -> None:
+    p = _Pub()
+    monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
+    monkeypatch.setattr(dj, "_make_publisher", lambda: p)
+
+    def _raise_run(_: TrainConfig) -> Path:
+        raise RuntimeError("artifact upload failed")
+
+    monkeypatch.setattr(dj, "_run_training", _raise_run)
+    with pytest.raises(RuntimeError):
+        dj.process_train_job(_payload())
+
+    msgs = [m for _, m in p.sent]
+    failed = [m for m in msgs if "failed" in m][-1]
+    obj: dict[str, object] = json.loads(failed)
+    assert obj["type"] == "digits.train.failed.v1"
+    m3: object = obj["message"]
+    assert isinstance(m3, str)
+    assert "Artifact upload failed" in m3
