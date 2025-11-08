@@ -146,6 +146,18 @@ def _summarize_exc_info(exc_info: object) -> str:
     return "job failed"
 
 
+def _coerce_str(val: object) -> str | None:
+    if isinstance(val, str):
+        return val
+    if isinstance(val, bytes | bytearray):
+        try:
+            return bytes(val).decode("utf-8", errors="ignore")
+        except (UnicodeDecodeError, ValueError):  # pragma: no cover - defensive
+            logging.getLogger("handwriting_ai").debug("coerce_str_decode_failed")
+            return None
+    return None
+
+
 def _extract_payload(job: object) -> dict[str, object]:
     # RQ job.args is typically a tuple[list] of positional args
     args: object = getattr(job, "args", None)
@@ -196,63 +208,66 @@ class FailureWatcher:
         for jid in job_ids:
             if not isinstance(jid, str):
                 continue
-            st = self.store
-            if st is None:
-                continue
-            if st.seen(jid):
-                continue
-            try:
-                job = _rq_fetch_job(conn, jid)
-            except (RuntimeError, ValueError, TypeError, OSError):
-                # If the job cannot be fetched, mark it to avoid loops and continue
-                logging.getLogger("handwriting_ai").info("rq_fetch_failed")
-                st.mark(jid)
-                continue
-            payload = _extract_payload(job)
-            request_id = str(payload.get("request_id") or "")
-            user_id_obj: object | None = payload.get("user_id")
-            user_id = user_id_obj if isinstance(user_id_obj, int) else 0
-            model_id = str(payload.get("model_id") or "")
-            exc: object = getattr(job, "exc_info", None)
-            message = _summarize_exc_info(exc)
+            self._process_failed_job(conn, jid)
 
-            # Log the full exc_info for diagnostics
-            log.info(
-                "rq_failure_detected jid=%s req=%s uid=%s model=%s error=%s",
-                jid,
-                request_id,
-                int(user_id),
-                model_id,
-                message[:200],  # Truncate for log readability
-            )
-            if exc and isinstance(exc, str):
-                log.debug("rq_failure_exc_info jid=%s exc=%s", jid, exc[:500])
+    def _process_failed_job(self, conn: _RedisDebugClientProto, jid: str) -> None:
+        st = self.store
+        if st is None:
+            return
+        if st.seen(jid):
+            return
+        try:
+            job = _rq_fetch_job(conn, jid)
+        except (RuntimeError, ValueError, TypeError, OSError):
+            logging.getLogger("handwriting_ai").info("rq_fetch_failed")
+            st.mark(jid)
+            return
+        payload = _extract_payload(job)
+        request_id = str(payload.get("request_id") or "")
+        user_id_obj: object | None = payload.get("user_id")
+        user_id = user_id_obj if isinstance(user_id_obj, int) else 0
+        model_id = str(payload.get("model_id") or "")
+        exc: object = getattr(job, "exc_info", None)
+        message = _summarize_exc_info(exc)
+        if not isinstance(exc, str) or message == "job failed":
+            hint = _detect_failed_reason(conn, jid)
+            if hint:
+                message = _summarize_exc_info(hint)
 
-            # Publish a system failure by default (worker crash or unhandled exception)
-            evt = ev.failed(
-                ev.Context(
-                    request_id=request_id, user_id=int(user_id), model_id=model_id, run_id=None
-                ),
-                error_kind="system",
-                message=message,
-            )
-            pub = self.publisher
-            try:
-                if pub is not None:
-                    log.info(
-                        "rq_failure_watcher_publish jid=%s req=%s uid=%s model=%s channel=%s",
-                        jid,
-                        request_id,
-                        int(user_id),
-                        model_id,
-                        self.events_channel,
-                    )
-                    pub.publish(self.events_channel, ev.encode_event(evt))
-                else:
-                    log.warning("rq_failure_watcher_no_publisher jid=%s", jid)
-            finally:
-                log.info("rq_failure_watcher_mark_processed jid=%s", jid)
-                st.mark(jid)
+        log = logging.getLogger("handwriting_ai")
+        log.info(
+            "rq_failure_detected jid=%s req=%s uid=%s model=%s error=%s",
+            jid,
+            request_id,
+            int(user_id),
+            model_id,
+            message[:200],
+        )
+        if exc and isinstance(exc, str):
+            log.debug("rq_failure_exc_info jid=%s exc=%s", jid, exc[:500])
+
+        evt = ev.failed(
+            ev.Context(request_id=request_id, user_id=int(user_id), model_id=model_id, run_id=None),
+            error_kind="system",
+            message=message,
+        )
+        pub = self.publisher
+        try:
+            if pub is not None:
+                log.info(
+                    "rq_failure_watcher_publish jid=%s req=%s uid=%s model=%s channel=%s",
+                    jid,
+                    request_id,
+                    int(user_id),
+                    model_id,
+                    self.events_channel,
+                )
+                pub.publish(self.events_channel, ev.encode_event(evt))
+            else:
+                log.warning("rq_failure_watcher_no_publisher jid=%s", jid)
+        finally:
+            log.info("rq_failure_watcher_mark_processed jid=%s", jid)
+            st.mark(jid)
 
     def run_forever(self) -> None:  # pragma: no cover - loop integration tested via scan_once
         log = _make_logger()
@@ -315,3 +330,29 @@ def _diag_log_raw_registry(conn: object, queue_name: str) -> None:
 @runtime_checkable
 class _RedisZRangeProto(_Protocol):  # pragma: no cover - typing only
     def zrange(self, key: str, start: int, end: int) -> list[str] | list[bytes]: ...
+
+
+@runtime_checkable
+class _RedisHashProto(_Protocol):  # pragma: no cover - typing only
+    def hget(self, key: str, field: str) -> str | bytes | None: ...
+
+
+def _detect_failed_reason(conn: object, job_id: str) -> str | None:
+    """Best-effort fetch of failure reason from Redis job hash fields.
+
+    Attempts common fields like 'failed_reason', 'failure_reason', and 'exc_info'.
+    Returns a string if found; otherwise None. Safe no-op on unsupported clients.
+    """
+    if not isinstance(conn, _RedisHashProto):
+        return None
+    key = f"rq:job:{job_id}"
+    for field in ("failed_reason", "failure_reason", "exc_info"):
+        try:
+            raw = conn.hget(key, field)
+        except (RuntimeError, ValueError, TypeError, OSError) as _e:
+            logging.getLogger("handwriting_ai").debug("redis_hget_failed %s", _e)
+            continue
+        s = _coerce_str(raw)
+        if s and s.strip():
+            return s
+    return None
