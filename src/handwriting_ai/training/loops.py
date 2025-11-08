@@ -12,7 +12,7 @@ from handwriting_ai.logging import get_logger
 from handwriting_ai.monitoring import check_memory_pressure, get_memory_stats
 
 from .progress import emit_batch as _emit_batch
-from .safety import on_batch_check
+from .safety import get_memory_guard_config, on_batch_check
 
 
 class _TrainableModel(Protocol):
@@ -84,14 +84,17 @@ def train_epoch(
             dt = _time.perf_counter() - t0
             ips = (int(y.size(0)) / dt) if dt > 0 else 0.0
             mem = get_memory_stats()
-            pressed = check_memory_pressure()
+            _mg = get_memory_guard_config()
+            thr = float(_mg.threshold_percent)
+            pressed = check_memory_pressure(threshold_percent=thr)
             press = "true" if pressed else "false"
             log.info(
                 f"train_batch_done epoch={ep}/{ep_total} "
                 f"batch={batch_idx+1}/{total_batches} "
                 f"batch_loss={float(loss.item()):.4f} batch_acc={batch_acc:.4f} "
                 f"avg_loss={avg_loss:.4f} samples_per_sec={ips:.1f} "
-                f"rss_mb={mem.rss_mb} mem_pct={mem.percent:.1f} mem_pressure={press}"
+                f"rss_mb={mem.rss_mb} mem_pct={mem.percent:.1f} mem_pressure={press} "
+                f"guard_threshold={thr:.1f}"
             )
             _emit_batch(
                 epoch=ep,
