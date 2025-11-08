@@ -11,6 +11,7 @@ class ProgressEmitter(Protocol):
 _emitter: ProgressEmitter | None = None
 _batch_emitter: BatchProgressEmitter | None = None
 _best_emitter: BestEmitter | None = None
+_batch_cadence: int = 0  # 0 means emit all batches
 
 
 def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
@@ -48,6 +49,16 @@ def set_batch_emitter(emitter: BatchProgressEmitter | None) -> None:
     _batch_emitter = emitter
 
 
+def set_batch_cadence(cadence: int) -> None:
+    """Configure global batch progress emission cadence.
+
+    - cadence <= 0: emit every batch
+    - cadence > 0: emit batches where (batch % cadence == 0), plus first and last batch
+    """
+    global _batch_cadence
+    _batch_cadence = int(cadence)
+
+
 def emit_batch(
     *,
     epoch: int,
@@ -61,6 +72,10 @@ def emit_batch(
 ) -> None:
     em = _batch_emitter
     if em is None:
+        return
+    # Gate emission by global cadence to centralize frequency control
+    cad = int(_batch_cadence)
+    if cad > 0 and not (batch == 1 or batch == total_batches or (batch % cad == 0)):
         return
     try:
         em.emit_batch(

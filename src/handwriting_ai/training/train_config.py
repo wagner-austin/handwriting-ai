@@ -37,6 +37,8 @@ class TrainConfig:
     morph_kernel_px: int = 1
     # Progress emission cadence (epochs). 1 = every epoch.
     progress_every_epochs: int = 1
+    # Progress emission cadence (batches). 0 = emit every batch.
+    progress_every_batches: int = 100
     # Calibration toggles (preflight pipeline tuning)
     calibrate: bool = False
     calibration_samples: int = 8

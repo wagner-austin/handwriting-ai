@@ -20,6 +20,7 @@ from .progress import ProgressEmitter
 from .progress import emit_best as _emit_best
 from .progress import emit_epoch as _emit_epoch
 from .progress import emit_progress as _emit_progress
+from .progress import set_batch_cadence as _set_batch_cadence
 from .progress import set_progress_emitter as _set_progress_emitter
 from .resources import ResourceLimits
 from .runtime import apply_threads, build_effective_config
@@ -178,64 +179,74 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     )
     apply_threads(ec)
     _configure_memory_guard_from_limits(cfg, limits)
-    # Log threading and device configuration
-    intra = torch.get_num_threads()
-    interop = torch.get_num_interop_threads() if hasattr(torch, "get_num_interop_threads") else None
-    if interop is not None:
-        log.info(f"threads_configured requested={cfg.threads} intra={intra} interop={interop}")
-    else:
-        log.info(f"threads_configured requested={cfg.threads} intra={intra}")
-    log.info(f"device={device}")
+    # Centralize batch progress frequency control (Discord/consumers rely on this cadence)
+    _set_batch_cadence(int(cfg.progress_every_batches))
+    try:
+        # Log threading and device configuration
+        intra = torch.get_num_threads()
+        interop = (
+            torch.get_num_interop_threads() if hasattr(torch, "get_num_interop_threads") else None
+        )
+        if interop is not None:
+            log.info(f"threads_configured requested={cfg.threads} intra={intra} interop={interop}")
+        else:
+            log.info(f"threads_configured requested={cfg.threads} intra={intra}")
+        log.info(f"device={device}")
 
-    # DataLoader configuration from resource limits
-    loader_cfg = ec.loader_cfg
-    log.info(
-        "dataloader_config "
-        f"batch_size={loader_cfg.batch_size} num_workers={loader_cfg.num_workers} "
-        f"persistent_workers={loader_cfg.persistent_workers} "
-        f"prefetch_factor={loader_cfg.prefetch_factor}"
-    )
+        # DataLoader configuration from resource limits
+        loader_cfg = ec.loader_cfg
+        log.info(
+            "dataloader_config "
+            f"batch_size={loader_cfg.batch_size} num_workers={loader_cfg.num_workers} "
+            f"persistent_workers={loader_cfg.persistent_workers} "
+            f"prefetch_factor={loader_cfg.prefetch_factor}"
+        )
 
-    train_base, test_base = bases
-    # Build loaders with resource-aware configuration
-    train_ds, train_loader, test_loader = _make_loaders_impl(train_base, test_base, cfg, loader_cfg)
-    # Limit OpenMP/BLAS thread pools alongside ATen threads
-    from threadpoolctl import threadpool_limits
+        train_base, test_base = bases
+        # Build loaders with resource-aware configuration
+        train_ds, train_loader, test_loader = _make_loaders_impl(
+            train_base, test_base, cfg, loader_cfg
+        )
+        # Limit OpenMP/BLAS thread pools alongside ATen threads
+        from threadpoolctl import threadpool_limits
 
-    with threadpool_limits(limits=ec.intra_threads):
-        model = _build_model()
-        log.info("model_built_starting_training")
-        opt, sch = _build_optimizer_and_scheduler(model, cfg)
-        try:
-            best_sd, best_val = _run_training_loop(
-                model, train_loader, test_loader, device, cfg, opt, sch
-            )
-        except KeyboardInterrupt:
-            logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
-            best_val = -1.0
-            best_sd = None
+        with threadpool_limits(limits=ec.intra_threads):
+            model = _build_model()
+            log.info("model_built_starting_training")
+            opt, sch = _build_optimizer_and_scheduler(model, cfg)
+            try:
+                best_sd, best_val = _run_training_loop(
+                    model, train_loader, test_loader, device, cfg, opt, sch
+                )
+            except KeyboardInterrupt:
+                logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
+                best_val = -1.0
+                best_sd = None
 
-    log.info("threadpoolctl_applied")
+        log.info("threadpoolctl_applied")
 
-    # Write artifacts via helper
-    sd = best_sd if best_sd is not None else model.state_dict()
-    val = float(best_val if best_val >= 0 else _evaluate(model, test_loader, device))
-    model_dir = _write_artifacts_impl(
-        out_dir=cfg.out_dir,
-        model_id=cfg.model_id,
-        model_state=sd,
-        epochs=cfg.epochs,
-        batch_size=loader_cfg.batch_size,
-        lr=cfg.lr,
-        seed=cfg.seed,
-        device_str=cfg.device,
-        optim=cfg.optim,
-        scheduler=cfg.scheduler,
-        augment=cfg.augment,
-        test_val_acc=val,
-    )
-    log.info(f"artifact_written_to={model_dir}")
-    return model_dir
+        # Write artifacts via helper
+        sd = best_sd if best_sd is not None else model.state_dict()
+        val = float(best_val if best_val >= 0 else _evaluate(model, test_loader, device))
+        model_dir = _write_artifacts_impl(
+            out_dir=cfg.out_dir,
+            model_id=cfg.model_id,
+            model_state=sd,
+            epochs=cfg.epochs,
+            batch_size=loader_cfg.batch_size,
+            lr=cfg.lr,
+            seed=cfg.seed,
+            device_str=cfg.device,
+            optim=cfg.optim,
+            scheduler=cfg.scheduler,
+            augment=cfg.augment,
+            test_val_acc=val,
+        )
+        log.info(f"artifact_written_to={model_dir}")
+        return model_dir
+    finally:
+        # Avoid cross-run/test leakage of cadence
+        _set_batch_cadence(0)
 
 
 def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
