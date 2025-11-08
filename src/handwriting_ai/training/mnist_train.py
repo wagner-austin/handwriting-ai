@@ -257,6 +257,14 @@ def _configure_memory_guard_from_limits(cfg: TrainConfig, limits: ResourceLimits
     set_memory_guard_config(
         MemoryGuardConfig(enabled=mg_enabled, threshold_percent=thr, required_consecutive=req)
     )
+    # Emit configuration for observability and to prevent drift between guard and logs
+    log = get_logger()
+    log.info(
+        "mem_guard_config enabled=%s threshold_percent=%.1f required_consecutive=%d",
+        mg_enabled,
+        thr,
+        req,
+    )
 
 
 __all__ = [
