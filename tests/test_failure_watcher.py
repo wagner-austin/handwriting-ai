@@ -111,9 +111,6 @@ def _make_ports(
     def _started(_q: RQQueueProto) -> RQRegistryProto:
         return sr
 
-    def _stopped(_q: RQQueueProto) -> RQRegistryProto:
-        return stopr
-
     def _canceled(_q: RQQueueProto) -> RQRegistryProto:
         return cancr
 
