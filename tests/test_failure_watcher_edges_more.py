@@ -28,7 +28,7 @@ def test_coerce_job_ids_handles_bad_bytes_and_success() -> None:
     assert out == ["ok", "already_str"]
 
 
-def test_diag_log_raw_registry_error_branch() -> None:
+def test_get_raw_failed_job_ids_error_branch() -> None:
     from io import StringIO
 
     from handwriting_ai.logging import _JsonFormatter, get_logger
@@ -43,36 +43,79 @@ def test_diag_log_raw_registry_error_branch() -> None:
     h.setFormatter(_JsonFormatter())
     lg.addHandler(h)
     try:
-        mod._diag_log_raw_registry(_Conn(), "digits")
+        result = mod._get_raw_failed_job_ids(_Conn(), "digits")
     finally:
         lg.removeHandler(h)
     s = buf.getvalue()
-    assert "rq_registry_raw_check_failed" in s
+    assert "rq_registry_raw_query_failed" in s
+    assert result == []  # Should return empty list on error
 
 
-def test_diag_log_raw_registry_success_branch() -> None:
-    from io import StringIO
-
-    from handwriting_ai.logging import _JsonFormatter, get_logger
-
+def test_get_raw_failed_job_ids_success_branch() -> None:
     class _Conn:
         def zrange(self, key: str, start: int, end: int) -> list[str]:
             return ["a", "b"]
 
-    lg = get_logger()
-    buf = StringIO()
-    h = logging.StreamHandler(buf)
-    h.setFormatter(_JsonFormatter())
-    lg.addHandler(h)
-    old_level = lg.level
-    lg.setLevel(logging.DEBUG)
-    try:
-        mod._diag_log_raw_registry(_Conn(), "digits")
-    finally:
-        lg.removeHandler(h)
-        lg.setLevel(old_level)
-    s = buf.getvalue()
-    assert "rq_registry_raw_check" in s and "raw_count=2" in s
+    result = mod._get_raw_failed_job_ids(_Conn(), "digits")
+    assert result == ["a", "b"]
+
+
+def test_scan_once_uses_raw_fallback_when_rq_returns_empty(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test that scan_once uses raw Redis data when RQ registry returns empty."""
+    pub = _Pub()
+    store = _Store()
+
+    class _ConnWithZRange:
+        def zrange(self, key: str, start: int, end: int) -> list[str]:
+            # Raw Redis shows one failed job
+            return ["j1"]
+
+    class _EmptyReg:
+        def get_job_ids(self) -> list[str]:
+            # RQ registry returns empty (caching issue)
+            return []
+
+    def _conn(_url: str) -> object:
+        return _ConnWithZRange()
+
+    def _queue(_c: object, _n: str) -> object:
+        return object()
+
+    def _reg(_q: object) -> object:
+        return _EmptyReg()
+
+    def _fetch(_c: object, jid: str) -> object:
+        class _J:
+            args: ClassVar[list[dict[str, object]]] = [
+                {"request_id": "r", "user_id": 5, "model_id": "m", "type": "digits.train.v1"}
+            ]
+            exc_info: ClassVar[str] = "error"
+
+        assert jid == "j1"
+        return _J()
+
+    monkeypatch.setattr(mod, "_rq_connect", _conn, raising=True)
+    monkeypatch.setattr(mod, "_rq_queue", _queue, raising=True)
+    monkeypatch.setattr(mod, "_rq_failed_registry", _reg, raising=True)
+    monkeypatch.setattr(mod, "_rq_fetch_job", _fetch, raising=True)
+
+    fw = FWatcher(
+        redis_url="redis://localhost:6379/0",
+        queue_name="digits",
+        events_channel="digits:events",
+        poll_interval_s=0.01,
+        publisher=pub,
+        store=store,
+    )
+    fw.scan_once()
+
+    # Should have published the failure event using raw fallback
+    assert len(pub.items) == 1
+    ch, msg = pub.items[0]
+    assert ch == "digits:events"
+    evt: dict[str, object] = json.loads(msg)
+    assert evt.get("type") == "digits.train.failed.v1"
+    assert evt.get("request_id") == "r"
 
 
 @dataclass

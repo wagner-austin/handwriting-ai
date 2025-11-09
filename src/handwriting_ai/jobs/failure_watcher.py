@@ -189,26 +189,52 @@ class FailureWatcher:
 
     def scan_once(self) -> None:
         log = logging.getLogger("handwriting_ai")
+        log.info("rq_failure_watcher_scan_start queue=%s", self.queue_name)
         conn = _rq_connect(self.redis_url)
         q = _rq_queue(conn, self.queue_name)
         reg = _rq_failed_registry(q)
-        _diag_log_raw_registry(conn, self.queue_name)
 
+        # Get job IDs from RQ registry
         job_ids = _coerce_job_ids(reg.get_job_ids())
-        # Only log scans when there are failed jobs to reduce noise
+        log.info(
+            "rq_failure_watcher_scan_registry queue=%s rq_failed_count=%d",
+            self.queue_name,
+            len(job_ids),
+        )
+
+        # Also check raw Redis as fallback (RQ registry can have caching issues)
+        raw_ids = _get_raw_failed_job_ids(conn, self.queue_name)
+        log.info(
+            "rq_failure_watcher_scan_raw queue=%s raw_failed_count=%d",
+            self.queue_name,
+            len(raw_ids),
+        )
+
+        # If RQ returns empty but raw Redis shows jobs, use raw data
+        if len(job_ids) == 0 and len(raw_ids) > 0:
+            log.warning(
+                "rq_failure_watcher_mismatch queue=%s rq_count=0 raw_count=%d using_raw=true",
+                self.queue_name,
+                len(raw_ids),
+            )
+            job_ids = raw_ids
+
+        # Always log scans at INFO level when there are failed jobs
         if len(job_ids) > 0:
             log.info(
-                "rq_failure_watcher scan queue=%s failed_jobs=%d job_ids=%s",
+                "rq_failure_watcher_scan queue=%s failed_jobs=%d job_ids=%s",
                 self.queue_name,
                 len(job_ids),
                 job_ids[:10],  # Show first 10 IDs for debugging
             )
-        else:
-            log.debug("rq_failure_watcher scan queue=%s failed_jobs=0", self.queue_name)
         for jid in job_ids:
             if not isinstance(jid, str):
                 continue
             self._process_failed_job(conn, jid)
+
+        log.info(
+            "rq_failure_watcher_scan_complete queue=%s processed=%d", self.queue_name, len(job_ids)
+        )
 
     def _process_failed_job(self, conn: _RedisDebugClientProto, jid: str) -> None:
         st = self.store
@@ -280,8 +306,13 @@ class FailureWatcher:
         while True:
             try:
                 self.scan_once()
-            except (RuntimeError, ValueError, TypeError, OSError) as e:
-                logging.getLogger("handwriting_ai").info("rq_failure_watcher_scan_error %s", e)
+            except Exception as e:
+                logging.getLogger("handwriting_ai").error(
+                    "rq_failure_watcher_scan_error type=%s error=%s",
+                    type(e).__name__,
+                    str(e),
+                    exc_info=True,
+                )
             time.sleep(max(0.1, float(self.poll_interval_s)))
 
 
@@ -309,22 +340,26 @@ def run_from_env() -> None:
     FailureWatcher(url, queue_name=q, events_channel=ch, poll_interval_s=interval_s).run_forever()
 
 
-def _diag_log_raw_registry(conn: object, queue_name: str) -> None:
-    """Best-effort diagnostic for raw failed registry state.
+def _get_raw_failed_job_ids(conn: object, queue_name: str) -> list[str]:
+    """Query Redis directly for failed job IDs, bypassing RQ registry caching.
 
-    Uses optional Redis `zrange` method when available; safe no-op otherwise.
+    This is a fallback when RQ's FailedJobRegistry.get_job_ids() returns empty
+    due to caching or timing issues.
     """
-    log = logging.getLogger("handwriting_ai")
     registry_key = f"rq:queue:{queue_name}:failed"
-    if isinstance(conn, _RedisZRangeProto):
-        try:
-            raw_ids = conn.zrange(registry_key, 0, -1)
-            raw_count = len(raw_ids) if raw_ids else 0
-            log.debug("rq_registry_raw_check key=%s raw_count=%d", registry_key, raw_count)
-        except (RuntimeError, ValueError, TypeError, OSError) as raw_exc:
-            logging.getLogger("handwriting_ai").warning(
-                "rq_registry_raw_check_failed key=%s error=%s", registry_key, raw_exc
-            )
+    if not isinstance(conn, _RedisZRangeProto):
+        return []
+
+    try:
+        raw_ids = conn.zrange(registry_key, 0, -1)
+        if not raw_ids:
+            return []
+        return _coerce_job_ids(raw_ids)
+    except (RuntimeError, ValueError, TypeError, OSError, AttributeError, KeyError) as e:
+        logging.getLogger("handwriting_ai").warning(
+            "rq_registry_raw_query_failed key=%s error=%s", registry_key, str(e)
+        )
+        return []
 
 
 @runtime_checkable
