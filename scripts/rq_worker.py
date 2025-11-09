@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.events import digits as _ev
@@ -11,8 +12,12 @@ from handwriting_ai.logging import init_logging
 from handwriting_ai.monitoring import log_system_info
 from scripts.worker import _make_publisher_from_env, _real_run_training
 
+if TYPE_CHECKING:
+    # Use typing-only import to avoid runtime dependency in annotations
+    from redis import Redis as _Redis
 
-def _redis_from_url(url: str) -> object:  # pragma: no cover - runtime import only
+
+def _redis_from_url(url: str) -> _Redis:  # pragma: no cover - runtime import only
     import redis
 
     # RQ stores binary (pickled) payloads; decode_responses must be False
@@ -111,9 +116,10 @@ def _start_worker(s: _RqSettings) -> int:
     if callable(push_conn):
         push_conn(conn)
     try:
-        q = q_factory(s.queue_name)
+        # RQ 2.x requires explicit connection on Queue/Worker
+        q = q_factory(s.queue_name, connection=conn)
         # Strict: require modern RQ that accepts exception_handlers; no legacy fallbacks
-        w = worker_factory(queues=[q], exception_handlers=[_on_rq_job_failure])
+        w = worker_factory(queues=[q], connection=conn, exception_handlers=[_on_rq_job_failure])
         # Blocks until interrupted; returns boolean success
         success = bool(w.work())
         return 0 if success else 1
