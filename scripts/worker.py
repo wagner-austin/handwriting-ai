@@ -64,21 +64,42 @@ class _RedisPublisher:
         try:
             client = _redis_from_url(self._url)
             out_val = int(client.publish(channel, message))
-        except (OSError, RuntimeError, ValueError, TypeError, ConnectionError):
-            logging.getLogger("handwriting_ai").info("redis_publish_failed")
+            logging.getLogger("handwriting_ai").info(
+                "redis_publish_success channel=%s subscribers=%d", channel, out_val
+            )
+            return out_val
+        except (OSError, RuntimeError, ValueError, TypeError, ConnectionError) as exc:
+            logging.getLogger("handwriting_ai").error(
+                "redis_publish_failed channel=%s error_type=%s error=%s",
+                channel,
+                type(exc).__name__,
+                str(exc),
+                exc_info=True,
+            )
             return 0
-        return out_val
 
 
 def _make_publisher_from_env() -> dj.Publisher | None:
     url = os.getenv(_DEFAULT_REDIS_ENV)
     if not url or url.strip() == "":
+        logging.getLogger("handwriting_ai").warning(
+            "publisher_disabled env_var=%s not_set=true", _DEFAULT_REDIS_ENV
+        )
         return None
     try:
-        return _RedisPublisher(url)
-    except (ImportError, OSError, RuntimeError, ValueError, TypeError):
-        # If redis is not available or connection fails, fall back to no-op
-        logging.getLogger("handwriting_ai").info("redis_unavailable_fallback_noop")
+        pub = _RedisPublisher(url)
+        logging.getLogger("handwriting_ai").info(
+            "publisher_created env_var=%s url_prefix=%s", _DEFAULT_REDIS_ENV, url[:20]
+        )
+        return pub
+    except (ImportError, OSError, RuntimeError, ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error(
+            "publisher_creation_failed env_var=%s error_type=%s error=%s",
+            _DEFAULT_REDIS_ENV,
+            type(exc).__name__,
+            str(exc),
+            exc_info=True,
+        )
         return None
 
 

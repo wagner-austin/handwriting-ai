@@ -334,20 +334,43 @@ class _ProgressEmitter:
 
         Single source of truth: accepts BatchMetrics dataclass.
         """
+        if self._publisher is None:
+            logging.getLogger("handwriting_ai").warning(
+                "batch_event_skipped_no_publisher epoch=%d batch=%d req=%s",
+                metrics.epoch,
+                metrics.batch,
+                self._req,
+            )
+            return
         try:
-            if self._publisher is not None:
-                msg = ev.batch(
-                    ev.Context(
-                        request_id=self._req,
-                        user_id=self._uid,
-                        model_id=self._mid,
-                        run_id=self._run,
-                    ),
-                    metrics,
-                )
-                self._publisher.publish(self._channel, ev.encode_event(msg))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+            msg = ev.batch(
+                ev.Context(
+                    request_id=self._req,
+                    user_id=self._uid,
+                    model_id=self._mid,
+                    run_id=self._run,
+                ),
+                metrics,
+            )
+            result = self._publisher.publish(self._channel, ev.encode_event(msg))
+            logging.getLogger("handwriting_ai").info(
+                "batch_event_published epoch=%d batch=%d channel=%s subscribers=%d req=%s",
+                metrics.epoch,
+                metrics.batch,
+                self._channel,
+                result,
+                self._req,
+            )
+        except Exception as exc:
+            logging.getLogger("handwriting_ai").error(
+                "batch_event_publish_failed epoch=%d batch=%d error_type=%s error=%s req=%s",
+                metrics.epoch,
+                metrics.batch,
+                type(exc).__name__,
+                str(exc),
+                self._req,
+                exc_info=True,
+            )
 
     def emit_best(self, *, epoch: int, val_acc: float) -> None:
         try:

@@ -190,51 +190,44 @@ class FailureWatcher:
     def scan_once(self) -> None:
         log = logging.getLogger("handwriting_ai")
         log.info("rq_failure_watcher_scan_start queue=%s", self.queue_name)
-        conn = _rq_connect(self.redis_url)
-        q = _rq_queue(conn, self.queue_name)
-        reg = _rq_failed_registry(q)
 
-        # Get job IDs from RQ registry
-        job_ids = _coerce_job_ids(reg.get_job_ids())
+        conn = _rq_connect(self.redis_url)
+        log.debug("rq_failure_watcher_connected redis_url=%s", self.redis_url)
+
+        q = _rq_queue(conn, self.queue_name)
+        log.debug("rq_failure_watcher_queue_created queue=%s", self.queue_name)
+
+        reg = _rq_failed_registry(q)
+        log.debug("rq_failure_watcher_registry_created queue=%s", self.queue_name)
+
+        # Get job IDs from RQ FailedJobRegistry
+        raw_job_ids = reg.get_job_ids()
         log.info(
-            "rq_failure_watcher_scan_registry queue=%s rq_failed_count=%d",
+            "rq_failure_watcher_registry_fetched queue=%s raw_type=%s raw_count=%d",
+            self.queue_name,
+            type(raw_job_ids).__name__,
+            len(raw_job_ids) if isinstance(raw_job_ids, list) else 0,
+        )
+
+        job_ids = _coerce_job_ids(raw_job_ids)
+        log.info(
+            "rq_failure_watcher_scan_complete queue=%s failed_jobs=%d",
             self.queue_name,
             len(job_ids),
         )
 
-        # Also check raw Redis as fallback (RQ registry can have caching issues)
-        raw_ids = _get_raw_failed_job_ids(conn, self.queue_name)
-        log.info(
-            "rq_failure_watcher_scan_raw queue=%s raw_failed_count=%d",
-            self.queue_name,
-            len(raw_ids),
-        )
-
-        # If RQ returns empty but raw Redis shows jobs, use raw data
-        if len(job_ids) == 0 and len(raw_ids) > 0:
-            log.warning(
-                "rq_failure_watcher_mismatch queue=%s rq_count=0 raw_count=%d using_raw=true",
-                self.queue_name,
-                len(raw_ids),
-            )
-            job_ids = raw_ids
-
-        # Always log scans at INFO level when there are failed jobs
         if len(job_ids) > 0:
             log.info(
-                "rq_failure_watcher_scan queue=%s failed_jobs=%d job_ids=%s",
+                "rq_failure_watcher_processing queue=%s job_ids=%s",
                 self.queue_name,
-                len(job_ids),
-                job_ids[:10],  # Show first 10 IDs for debugging
+                job_ids[:10],
             )
+
         for jid in job_ids:
             if not isinstance(jid, str):
+                log.warning("rq_failure_watcher_skip_non_string jid_type=%s", type(jid).__name__)
                 continue
             self._process_failed_job(conn, jid)
-
-        log.info(
-            "rq_failure_watcher_scan_complete queue=%s processed=%d", self.queue_name, len(job_ids)
-        )
 
     def _process_failed_job(self, conn: _RedisDebugClientProto, jid: str) -> None:
         st = self.store
@@ -338,33 +331,6 @@ def run_from_env() -> None:
     ch = os.getenv("DIGITS_EVENTS_CHANNEL") or "digits:events"
     interval_s = float(os.getenv("RQ_WATCHER_POLL_SECONDS") or 2.0)
     FailureWatcher(url, queue_name=q, events_channel=ch, poll_interval_s=interval_s).run_forever()
-
-
-def _get_raw_failed_job_ids(conn: object, queue_name: str) -> list[str]:
-    """Query Redis directly for failed job IDs, bypassing RQ registry caching.
-
-    This is a fallback when RQ's FailedJobRegistry.get_job_ids() returns empty
-    due to caching or timing issues.
-    """
-    registry_key = f"rq:queue:{queue_name}:failed"
-    if not isinstance(conn, _RedisZRangeProto):
-        return []
-
-    try:
-        raw_ids = conn.zrange(registry_key, 0, -1)
-        if not raw_ids:
-            return []
-        return _coerce_job_ids(raw_ids)
-    except (RuntimeError, ValueError, TypeError, OSError, AttributeError, KeyError) as e:
-        logging.getLogger("handwriting_ai").warning(
-            "rq_registry_raw_query_failed key=%s error=%s", registry_key, str(e)
-        )
-        return []
-
-
-@runtime_checkable
-class _RedisZRangeProto(_Protocol):  # pragma: no cover - typing only
-    def zrange(self, key: str, start: int, end: int) -> list[str] | list[bytes]: ...
 
 
 @runtime_checkable
