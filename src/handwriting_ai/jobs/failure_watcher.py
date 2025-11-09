@@ -88,6 +88,8 @@ if TYPE_CHECKING:
     class _RQJobProto(_Protocol):  # pragma: no cover - typing only
         args: object
         exc_info: object
+        started_at: object
+        enqueued_at: object
 
     class _RedisDebugClientProto(_Protocol):  # pragma: no cover - typing only
         def zrange(self, key: str, start: int, end: int) -> list[str] | list[bytes]: ...
@@ -97,6 +99,8 @@ if TYPE_CHECKING:
     def _rq_queue(conn: _RedisDebugClientProto, name: str) -> _RQQueueProto: ...
 
     def _rq_failed_registry(queue: _RQQueueProto) -> _RQRegistryProto: ...
+
+    def _rq_started_registry(queue: _RQQueueProto) -> _RQRegistryProto: ...
 
     def _rq_fetch_job(conn: _RedisDebugClientProto, job_id: str) -> _RQJobProto: ...
 
@@ -121,6 +125,11 @@ else:  # pragma: no cover - runtime only
         import rq
 
         return rq.registry.FailedJobRegistry(queue=queue)
+
+    def _rq_started_registry(queue):
+        import rq
+
+        return rq.registry.StartedJobRegistry(queue=queue)
 
     def _rq_fetch_job(conn, job_id):
         import rq
@@ -177,6 +186,7 @@ class FailureWatcher:
     queue_name: str
     events_channel: str
     poll_interval_s: float = 2.0
+    stuck_job_timeout_s: float = 1800.0  # 30 minutes
     publisher: Publisher | None = None
     store: _ProcessedStore | None = None
 
@@ -197,37 +207,70 @@ class FailureWatcher:
         q = _rq_queue(conn, self.queue_name)
         log.debug("rq_failure_watcher_queue_created queue=%s", self.queue_name)
 
-        reg = _rq_failed_registry(q)
-        log.debug("rq_failure_watcher_registry_created queue=%s", self.queue_name)
+        # Scan FailedJobRegistry for explicitly failed jobs
+        failed_reg = _rq_failed_registry(q)
+        log.debug("rq_failure_watcher_failed_registry_created queue=%s", self.queue_name)
 
-        # Get job IDs from RQ FailedJobRegistry
-        raw_job_ids = reg.get_job_ids()
+        raw_failed_ids = failed_reg.get_job_ids()
         log.info(
-            "rq_failure_watcher_registry_fetched queue=%s raw_type=%s raw_count=%d",
+            "rq_failure_watcher_failed_registry_fetched queue=%s raw_type=%s raw_count=%d",
             self.queue_name,
-            type(raw_job_ids).__name__,
-            len(raw_job_ids) if isinstance(raw_job_ids, list) else 0,
+            type(raw_failed_ids).__name__,
+            len(raw_failed_ids) if isinstance(raw_failed_ids, list) else 0,
         )
 
-        job_ids = _coerce_job_ids(raw_job_ids)
+        failed_job_ids = _coerce_job_ids(raw_failed_ids)
         log.info(
-            "rq_failure_watcher_scan_complete queue=%s failed_jobs=%d",
+            "rq_failure_watcher_failed_scan_complete queue=%s failed_jobs=%d",
             self.queue_name,
-            len(job_ids),
+            len(failed_job_ids),
         )
 
-        if len(job_ids) > 0:
+        if len(failed_job_ids) > 0:
             log.info(
-                "rq_failure_watcher_processing queue=%s job_ids=%s",
+                "rq_failure_watcher_processing_failed queue=%s job_ids=%s",
                 self.queue_name,
-                job_ids[:10],
+                failed_job_ids[:10],
             )
 
-        for jid in job_ids:
+        for jid in failed_job_ids:
             if not isinstance(jid, str):
                 log.warning("rq_failure_watcher_skip_non_string jid_type=%s", type(jid).__name__)
                 continue
             self._process_failed_job(conn, jid)
+
+        # Scan StartedJobRegistry for stuck jobs (OOM killed workers, etc.)
+        started_reg = _rq_started_registry(q)
+        log.debug("rq_failure_watcher_started_registry_created queue=%s", self.queue_name)
+
+        raw_started_ids = started_reg.get_job_ids()
+        log.info(
+            "rq_failure_watcher_started_registry_fetched queue=%s raw_type=%s raw_count=%d",
+            self.queue_name,
+            type(raw_started_ids).__name__,
+            len(raw_started_ids) if isinstance(raw_started_ids, list) else 0,
+        )
+
+        started_job_ids = _coerce_job_ids(raw_started_ids)
+        log.info(
+            "rq_failure_watcher_started_scan_complete queue=%s started_jobs=%d",
+            self.queue_name,
+            len(started_job_ids),
+        )
+
+        if len(started_job_ids) > 0:
+            log.info(
+                "rq_failure_watcher_processing_started queue=%s job_ids=%s timeout_s=%.1f",
+                self.queue_name,
+                started_job_ids[:10],
+                float(self.stuck_job_timeout_s),
+            )
+
+        for jid in started_job_ids:
+            if not isinstance(jid, str):
+                log.warning("rq_failure_watcher_skip_non_string jid_type=%s", type(jid).__name__)
+                continue
+            self._process_stuck_job(conn, jid)
 
     def _process_failed_job(self, conn: _RedisDebugClientProto, jid: str) -> None:
         st = self.store
@@ -288,6 +331,92 @@ class FailureWatcher:
             log.info("rq_failure_watcher_mark_processed jid=%s", jid)
             st.mark(jid)
 
+    def _process_stuck_job(self, conn: _RedisDebugClientProto, jid: str) -> None:
+        """Process jobs stuck in StartedJobRegistry (OOM killed workers, etc.)."""
+        st = self.store
+        if st is None:
+            return
+        if st.seen(jid):
+            return
+        try:
+            job = _rq_fetch_job(conn, jid)
+        except (RuntimeError, ValueError, TypeError, OSError):
+            logging.getLogger("handwriting_ai").info("rq_fetch_stuck_job_failed jid=%s", jid)
+            st.mark(jid)
+            return
+        # Check if job has been running too long
+        started_at_obj: object = getattr(job, "started_at", None)
+        enqueued_at_obj: object = getattr(job, "enqueued_at", None)
+        log = logging.getLogger("handwriting_ai")
+        # Use started_at if available, fallback to enqueued_at
+        import datetime as dt
+
+        now = dt.datetime.now(tz=dt.UTC)
+        started_at: dt.datetime | None = None
+        if isinstance(started_at_obj, dt.datetime):
+            started_at = started_at_obj
+        elif isinstance(enqueued_at_obj, dt.datetime):
+            started_at = enqueued_at_obj
+        if started_at is None:
+            log.debug("rq_stuck_job_no_timestamp jid=%s skipping_timeout_check=true", jid)
+            return
+        # Make started_at timezone-aware if naive
+        if started_at.tzinfo is None:
+            started_at = started_at.replace(tzinfo=dt.UTC)
+        elapsed_s = (now - started_at).total_seconds()
+        timeout_s = float(self.stuck_job_timeout_s)
+        log.info(
+            "rq_stuck_job_check jid=%s elapsed_s=%.1f timeout_s=%.1f stuck=%s",
+            jid,
+            elapsed_s,
+            timeout_s,
+            elapsed_s >= timeout_s,
+        )
+        if elapsed_s < timeout_s:
+            return
+        # Job is stuck - emit failed event
+        payload = _extract_payload(job)
+        request_id = str(payload.get("request_id") or "")
+        user_id_obj: object | None = payload.get("user_id")
+        user_id = user_id_obj if isinstance(user_id_obj, int) else 0
+        model_id = str(payload.get("model_id") or "")
+        elapsed_min = int(elapsed_s // 60)
+        message = (
+            f"Job stuck in started state for {elapsed_min} minutes - "
+            "worker likely killed by OS (OOM, signal 9, container eviction). "
+            "Reduce batch size or increase memory limit and retry."
+        )
+        log.info(
+            "rq_stuck_job_detected jid=%s req=%s uid=%s model=%s elapsed_min=%d",
+            jid,
+            request_id,
+            int(user_id),
+            model_id,
+            elapsed_min,
+        )
+        evt = ev.failed(
+            ev.Context(request_id=request_id, user_id=int(user_id), model_id=model_id, run_id=None),
+            error_kind="system",
+            message=message,
+        )
+        pub = self.publisher
+        try:
+            if pub is not None:
+                log.info(
+                    "rq_stuck_job_watcher_publish jid=%s req=%s uid=%s model=%s channel=%s",
+                    jid,
+                    request_id,
+                    int(user_id),
+                    model_id,
+                    self.events_channel,
+                )
+                pub.publish(self.events_channel, ev.encode_event(evt))
+            else:
+                log.warning("rq_stuck_job_watcher_no_publisher jid=%s", jid)
+        finally:
+            log.info("rq_stuck_job_watcher_mark_processed jid=%s", jid)
+            st.mark(jid)
+
     def run_forever(self) -> None:  # pragma: no cover - loop integration tested via scan_once
         log = _make_logger()
         log.info(
@@ -330,7 +459,14 @@ def run_from_env() -> None:
     q = os.getenv("RQ__QUEUE") or "digits"
     ch = os.getenv("DIGITS_EVENTS_CHANNEL") or "digits:events"
     interval_s = float(os.getenv("RQ_WATCHER_POLL_SECONDS") or 2.0)
-    FailureWatcher(url, queue_name=q, events_channel=ch, poll_interval_s=interval_s).run_forever()
+    stuck_timeout_s = float(os.getenv("RQ_WATCHER_STUCK_TIMEOUT_SECONDS") or 1800.0)
+    FailureWatcher(
+        url,
+        queue_name=q,
+        events_channel=ch,
+        poll_interval_s=interval_s,
+        stuck_job_timeout_s=stuck_timeout_s,
+    ).run_forever()
 
 
 @runtime_checkable
