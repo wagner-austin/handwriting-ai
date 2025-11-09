@@ -2,12 +2,20 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
-from typing import ClassVar
+from typing import TYPE_CHECKING
 
-import pytest
+import handwriting_ai.jobs.watcher.logic as logic
+from handwriting_ai.jobs.watcher.ports import WatcherPorts
+from handwriting_ai.jobs.watcher.watcher import FailureWatcher as FWatcher
 
-import handwriting_ai.jobs.failure_watcher as mod
-from handwriting_ai.jobs.failure_watcher import FailureWatcher as FWatcher
+if TYPE_CHECKING:
+    from handwriting_ai.jobs.watcher.adapters import (
+        RedisClient,
+        RedisDebugClientProto,
+        RQJobProto,
+        RQQueueProto,
+        RQRegistryProto,
+    )
 
 
 @dataclass
@@ -39,13 +47,69 @@ class _Reg:
 
 
 class _JobNoExc:
-    args: ClassVar[list[dict[str, object]]] = [
-        {"request_id": "r-oom", "user_id": 7, "model_id": "m"}
-    ]
-    exc_info: ClassVar[None] = None
+    args: object
+    exc_info: object
+    started_at: object
+    enqueued_at: object
+
+    def __init__(self) -> None:
+        self.args = [{"request_id": "r-oom", "user_id": 7, "model_id": "m"}]
+        self.exc_info = None
+        self.started_at = None
+        self.enqueued_at = None
 
 
-def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.MonkeyPatch) -> None:
+def _build_ports_for_oom(conn: RedisDebugClientProto, jid: str) -> WatcherPorts:
+    def _mk_conn(_url: str) -> RedisDebugClientProto:
+        return conn
+
+    def _queue(_c: RedisDebugClientProto, _n: str) -> RQQueueProto:
+        return object()
+
+    class _FailedReg:
+        def get_job_ids(self) -> list[str]:
+            return [jid]
+
+    def _reg(_q: RQQueueProto) -> RQRegistryProto:
+        return _FailedReg()
+
+    def _started_reg(_q: RQQueueProto) -> RQRegistryProto:
+        return _Reg([])
+
+    def _fetch(_c: RedisDebugClientProto, _jid: str) -> RQJobProto:
+        return _JobNoExc()
+
+    def _rfu(url: str, *, decode_responses: bool = False) -> RedisClient:
+        class _Dummy:
+            def publish(self, channel: str, message: str) -> int:
+                return 1
+
+            def sismember(self, key: str, member: str) -> bool:
+                return False
+
+            def sadd(self, key: str, *members: str) -> int:
+                return 0
+
+        return _Dummy()
+
+    return WatcherPorts(
+        redis_from_url=_rfu,
+        rq_connect=_mk_conn,
+        rq_queue=_queue,
+        rq_failed_registry=_reg,
+        rq_started_registry=_started_reg,
+        rq_stopped_registry=lambda _q: _Reg([]),
+        rq_canceled_registry=lambda _q: _Reg([]),
+        rq_fetch_job=_fetch,
+        coerce_job_ids=logic.coerce_job_ids,
+        extract_payload=logic.extract_payload,
+        detect_failed_reason=logic.detect_failed_reason,
+        summarize_exc_info=logic.summarize_exc_info,
+        make_logger=logic.make_logger,
+    )
+
+
+def test_failure_watcher_uses_redis_reason_to_detect_oom() -> None:
     pub = _Pub()
     store = _Store()
 
@@ -68,30 +132,7 @@ def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.Mon
         b"Work-horse terminated unexpectedly; waitpid returned 9 (signal 9); "
     )
 
-    def _mk_conn(_url: str) -> object:
-        return conn
-
-    class _FailedReg:
-        def get_job_ids(self) -> list[str]:
-            return [jid]
-
-    def _queue(_c: object, _n: str) -> object:
-        return object()
-
-    def _reg(_q: object) -> object:
-        return _FailedReg()
-
-    def _started_reg(_q: object) -> object:
-        return _Reg([])  # no started jobs
-
-    def _fetch(_c: object, _jid: str) -> object:
-        return _JobNoExc()
-
-    monkeypatch.setattr(mod, "_rq_connect", _mk_conn, raising=True)
-    monkeypatch.setattr(mod, "_rq_queue", _queue, raising=True)
-    monkeypatch.setattr(mod, "_rq_failed_registry", _reg, raising=True)
-    monkeypatch.setattr(mod, "_rq_started_registry", _started_reg, raising=True)
-    monkeypatch.setattr(mod, "_rq_fetch_job", _fetch, raising=True)
+    ports = _build_ports_for_oom(conn, jid)
 
     fw = FWatcher(
         redis_url="redis://localhost:6379/0",
@@ -100,6 +141,7 @@ def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.Mon
         poll_interval_s=0.01,
         publisher=pub,
         store=store,
+        ports=ports,
     )
     fw.scan_once()
 
