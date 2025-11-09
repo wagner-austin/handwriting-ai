@@ -12,8 +12,8 @@ def _preflight_registries() -> None:
     Avoids long-running loops when the environment provides an incompatible RQ version.
     """
     try:
-        import rq
-    except ImportError as e:  # pragma: no cover - surfaced at runtime
+        import rq  # type: ignore
+    except Exception as e:  # pragma: no cover - import error surfaced at runtime
         raise RuntimeError(f"RQ import failed: {type(e).__name__}: {e}")
     reg = getattr(rq, "registry", None)
     if reg is None:
