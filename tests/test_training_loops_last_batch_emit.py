@@ -9,6 +9,7 @@ from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
 import handwriting_ai.training.loops as loops
+from handwriting_ai.events.digits import BatchMetrics
 
 
 class _Model:
@@ -58,19 +59,8 @@ def test_train_epoch_emits_last_batch(monkeypatch: pytest.MonkeyPatch) -> None:
     # Capture batches emitted by loops
     seen: list[int] = []
 
-    def _cap_emit_batch(
-        *,
-        epoch: int,
-        total_epochs: int,
-        batch: int,
-        total_batches: int,
-        batch_loss: float,
-        batch_acc: float,
-        avg_loss: float,
-        samples_per_sec: float,
-    ) -> None:
-        del epoch, total_epochs, total_batches, batch_loss, batch_acc, avg_loss, samples_per_sec
-        seen.append(int(batch))
+    def _cap_emit_batch(metrics: BatchMetrics) -> None:
+        seen.append(metrics.batch)
 
     monkeypatch.setattr(loops, "_emit_batch", _cap_emit_batch, raising=True)
     monkeypatch.setattr(loops, "on_batch_check", lambda: False, raising=True)
