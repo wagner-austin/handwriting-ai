@@ -45,5 +45,5 @@ class TrainConfig:
     force_calibration: bool = False
     # Memory guard (proactive OOM prevention)
     memory_guard: bool = True
-    mem_guard_threshold_pct: float = 95.0
+    mem_guard_threshold_pct: float = 92.0
     mem_guard_required_checks: int = 3
