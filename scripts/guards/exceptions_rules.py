@@ -29,20 +29,24 @@ def _scan_silent_excepts(path: Path, lines: list[str]) -> list[Violation]:
     out: list[Violation] = []
     n = len(lines)
     idx = 0
+    is_watcher = path.as_posix().startswith("src/handwriting_ai/jobs/watcher/")
     while idx < n:
         raw = lines[idx]
         if not raw.lstrip().startswith("except"):
             idx += 1
             continue
         indent = len(raw) - len(raw.lstrip(" \t"))
-        next_idx, ok = _block_has_raise_or_log(lines, idx + 1, indent)
+        next_idx, found_raise, found_log = _block_signals(lines, idx + 1, indent)
+        func_name = _enclosing_function_name(lines, idx, indent)
+        strict = bool(is_watcher and func_name != "run_forever")
+        ok = found_raise if strict else (found_raise or found_log)
         if not ok:
             out.append(Violation(path, idx + 1, "silent-except", raw.rstrip()))
         idx = next_idx if next_idx > idx else idx + 1
     return out
 
 
-def _block_has_raise_or_log(lines: list[str], start: int, indent: int) -> tuple[int, bool]:
+def _block_signals(lines: list[str], start: int, indent: int) -> tuple[int, bool, bool]:
     n = len(lines)
     j = start
     found_raise = False
@@ -62,4 +66,19 @@ def _block_has_raise_or_log(lines: list[str], start: int, indent: int) -> tuple[
             if ("logger." in b and "(") or "logging.getLogger" in b:
                 found_log = True
         j += 1
-    return j, bool(found_raise or found_log)
+    return j, found_raise, found_log
+
+
+def _enclosing_function_name(lines: list[str], idx: int, indent: int) -> str | None:
+    j = idx - 1
+    while j >= 0:
+        raw = lines[j]
+        if not raw.strip():
+            j -= 1
+            continue
+        raw_indent = len(raw) - len(raw.lstrip(" \t"))
+        if raw.lstrip().startswith("def ") and raw_indent <= indent:
+            sig = raw.strip()
+            return sig[4 : sig.find("(")].strip() if "(" in sig else sig[4:].strip()
+        j -= 1
+    return None
