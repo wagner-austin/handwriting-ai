@@ -11,17 +11,12 @@ def _preflight_registries() -> None:
     This checks that rq.registry exposes StartedJobRegistry and CanceledJobRegistry.
     Avoids long-running loops when the environment provides an incompatible RQ version.
     """
-    try:
-        import rq
-    except ImportError as e:  # pragma: no cover - surfaced at runtime
-        raise RuntimeError(f"RQ import failed: {type(e).__name__}: {e}")
-    reg = getattr(rq, "registry", None)
-    if reg is None:
-        raise RuntimeError("rq.registry module unavailable")
+    import rq.registry as reg  # will raise ImportError naturally if unavailable
+
     missing: list[str] = []
-    if not getattr(reg, "StartedJobRegistry", None):
+    if not hasattr(reg, "StartedJobRegistry"):
         missing.append("StartedJobRegistry")
-    if not getattr(reg, "CanceledJobRegistry", None):
+    if not hasattr(reg, "CanceledJobRegistry"):
         missing.append("CanceledJobRegistry")
     if missing:
         raise RuntimeError(f"Missing required RQ registries: {', '.join(missing)}")
