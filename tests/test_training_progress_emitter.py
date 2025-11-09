@@ -10,6 +10,7 @@ from torch import Tensor
 from torch.utils.data import Dataset
 
 import handwriting_ai.training.mnist_train as mt
+from handwriting_ai.events.digits import BatchMetrics
 from handwriting_ai.training.mnist_train import TrainConfig, set_progress_emitter
 from handwriting_ai.training.progress import (
     emit_batch,
@@ -193,19 +194,8 @@ class _BatchBestEpochRecorder:
         self.best: list[tuple[int, float]] = []
         self.epoch: list[tuple[int, float, float]] = []
 
-    def emit_batch(
-        self,
-        *,
-        epoch: int,
-        total_epochs: int,
-        batch: int,
-        total_batches: int,
-        batch_loss: float,
-        batch_acc: float,
-        avg_loss: float,
-        samples_per_sec: float,
-    ) -> None:
-        self.batch.append((epoch, total_epochs, batch))
+    def emit_batch(self, metrics: BatchMetrics) -> None:
+        self.batch.append((metrics.epoch, metrics.total_epochs, metrics.batch))
 
     def emit_best(self, *, epoch: int, val_acc: float) -> None:
         self.best.append((epoch, val_acc))
@@ -229,14 +219,24 @@ def test_batch_best_epoch_emitters_are_called() -> None:
     set_epoch_emitter(rec)
 
     emit_batch(
-        epoch=1,
-        total_epochs=2,
-        batch=3,
-        total_batches=10,
-        batch_loss=0.1,
-        batch_acc=0.9,
-        avg_loss=0.2,
-        samples_per_sec=50.0,
+        BatchMetrics(
+            epoch=1,
+            total_epochs=2,
+            batch=3,
+            total_batches=10,
+            batch_loss=0.1,
+            batch_acc=0.9,
+            avg_loss=0.2,
+            samples_per_sec=50.0,
+            main_rss_mb=100,
+            workers_rss_mb=50,
+            worker_count=2,
+            cgroup_usage_mb=500,
+            cgroup_limit_mb=1000,
+            cgroup_pct=50.0,
+            anon_mb=200,
+            file_mb=150,
+        )
     )
     emit_best(epoch=1, val_acc=0.5)
     emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
@@ -246,18 +246,7 @@ def test_batch_best_epoch_emitters_are_called() -> None:
 
 def test_batch_best_epoch_emitter_failures_swallowed() -> None:
     class _Bad:
-        def emit_batch(
-            self,
-            *,
-            epoch: int,
-            total_epochs: int,
-            batch: int,
-            total_batches: int,
-            batch_loss: float,
-            batch_acc: float,
-            avg_loss: float,
-            samples_per_sec: float,
-        ) -> None:
+        def emit_batch(self, metrics: BatchMetrics) -> None:
             raise ValueError("boom")
 
         def emit_best(self, *, epoch: int, val_acc: float) -> None:
@@ -281,14 +270,24 @@ def test_batch_best_epoch_emitter_failures_swallowed() -> None:
 
     # Calls should not raise
     emit_batch(
-        epoch=1,
-        total_epochs=2,
-        batch=1,
-        total_batches=2,
-        batch_loss=0.1,
-        batch_acc=0.9,
-        avg_loss=0.2,
-        samples_per_sec=10.0,
+        BatchMetrics(
+            epoch=1,
+            total_epochs=2,
+            batch=1,
+            total_batches=2,
+            batch_loss=0.1,
+            batch_acc=0.9,
+            avg_loss=0.2,
+            samples_per_sec=10.0,
+            main_rss_mb=100,
+            workers_rss_mb=50,
+            worker_count=2,
+            cgroup_usage_mb=500,
+            cgroup_limit_mb=1000,
+            cgroup_pct=50.0,
+            anon_mb=200,
+            file_mb=150,
+        )
     )
     emit_best(epoch=1, val_acc=0.8)
     emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
@@ -300,14 +299,24 @@ def test_emit_no_emitters_noop() -> None:
     set_best_emitter(None)
     set_epoch_emitter(None)
     emit_batch(
-        epoch=1,
-        total_epochs=2,
-        batch=1,
-        total_batches=2,
-        batch_loss=0.1,
-        batch_acc=0.9,
-        avg_loss=0.2,
-        samples_per_sec=10.0,
+        BatchMetrics(
+            epoch=1,
+            total_epochs=2,
+            batch=1,
+            total_batches=2,
+            batch_loss=0.1,
+            batch_acc=0.9,
+            avg_loss=0.2,
+            samples_per_sec=10.0,
+            main_rss_mb=100,
+            workers_rss_mb=50,
+            worker_count=2,
+            cgroup_usage_mb=500,
+            cgroup_limit_mb=1000,
+            cgroup_pct=50.0,
+            anon_mb=200,
+            file_mb=150,
+        )
     )
     emit_best(epoch=1, val_acc=0.7)
     emit_epoch(epoch=1, total_epochs=2, train_loss=0.1, val_acc=0.2, time_s=0.5)
