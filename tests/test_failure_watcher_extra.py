@@ -107,9 +107,6 @@ def _make_ports(
     def _started(_q: RQQueueProto) -> RQRegistryProto:
         return sr
 
-    def _stopped(_q: RQQueueProto) -> RQRegistryProto:
-        return stopr
-
     def _canceled(_q: RQQueueProto) -> RQRegistryProto:
         return cancr
 
@@ -156,8 +153,6 @@ def test_canceled_job_publishes() -> None:
     assert evt.get("type") == "digits.train.failed.v1"
     assert evt.get("error_kind") == "user"
     assert evt.get("message") == "Job canceled"
-
-
 
 
 def test_stopped_and_canceled_fetch_errors_raise() -> None:
