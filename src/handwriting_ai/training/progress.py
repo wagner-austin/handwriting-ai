@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from typing import Protocol
 
+from handwriting_ai.events.digits import BatchMetrics
+
 
 class ProgressEmitter(Protocol):
     def emit(self, *, epoch: int, total_epochs: int, val_acc: float | None) -> None: ...
@@ -30,18 +32,12 @@ def emit_progress(epoch: int, total_epochs: int, val_acc: float | None) -> None:
 
 
 class BatchProgressEmitter(Protocol):
-    def emit_batch(
-        self,
-        *,
-        epoch: int,
-        total_epochs: int,
-        batch: int,
-        total_batches: int,
-        batch_loss: float,
-        batch_acc: float,
-        avg_loss: float,
-        samples_per_sec: float,
-    ) -> None: ...
+    """Protocol for batch progress emitters.
+
+    Single source of truth: accepts BatchMetrics dataclass.
+    """
+
+    def emit_batch(self, metrics: BatchMetrics) -> None: ...
 
 
 def set_batch_emitter(emitter: BatchProgressEmitter | None) -> None:
@@ -59,35 +55,22 @@ def set_batch_cadence(cadence: int) -> None:
     _batch_cadence = int(cadence)
 
 
-def emit_batch(
-    *,
-    epoch: int,
-    total_epochs: int,
-    batch: int,
-    total_batches: int,
-    batch_loss: float,
-    batch_acc: float,
-    avg_loss: float,
-    samples_per_sec: float,
-) -> None:
+def emit_batch(metrics: BatchMetrics) -> None:
+    """Emit batch progress using global emitter.
+
+    Single source of truth: accepts BatchMetrics dataclass.
+    """
     em = _batch_emitter
     if em is None:
         return
     # Gate emission by global cadence to centralize frequency control
     cad = int(_batch_cadence)
-    if cad > 0 and not (batch == 1 or batch == total_batches or (batch % cad == 0)):
+    if cad > 0 and not (
+        metrics.batch == 1 or metrics.batch == metrics.total_batches or (metrics.batch % cad == 0)
+    ):
         return
     try:
-        em.emit_batch(
-            epoch=epoch,
-            total_epochs=total_epochs,
-            batch=batch,
-            total_batches=total_batches,
-            batch_loss=batch_loss,
-            batch_acc=batch_acc,
-            avg_loss=avg_loss,
-            samples_per_sec=samples_per_sec,
-        )
+        em.emit_batch(metrics)
     except (RuntimeError, ValueError, TypeError):
         logging.getLogger("handwriting_ai").debug("progress_batch_emitter_failed")
 
