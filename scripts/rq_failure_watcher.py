@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from handwriting_ai.jobs.failure_watcher import run_from_env
+from handwriting_ai.jobs.watcher import run_from_env
 from handwriting_ai.logging import init_logging
 
 
