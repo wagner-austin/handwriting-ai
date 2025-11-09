@@ -57,7 +57,6 @@ def _run_training_loop(
         # Reset consecutive memory guard at epoch boundary
         reset_memory_guard()
         t0 = _time.perf_counter()
-        log.info(f"epoch_start_{ep}_{cfg.epochs}")
         log_memory_snapshot(context="epoch_start")
         train_loss = _train_epoch(
             model,
