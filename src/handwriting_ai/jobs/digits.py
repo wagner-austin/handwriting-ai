@@ -328,18 +328,11 @@ class _ProgressEmitter:
         self._run = run_id
 
     # Optional emitters wired in training.progress
-    def emit_batch(
-        self,
-        *,
-        epoch: int,
-        total_epochs: int,
-        batch: int,
-        total_batches: int,
-        batch_loss: float,
-        batch_acc: float,
-        avg_loss: float,
-        samples_per_sec: float,
-    ) -> None:
+    def emit_batch(self, metrics: ev.BatchMetrics) -> None:
+        """Emit batch progress event.
+
+        Single source of truth: accepts BatchMetrics dataclass.
+        """
         try:
             if self._publisher is not None:
                 msg = ev.batch(
@@ -349,14 +342,7 @@ class _ProgressEmitter:
                         model_id=self._mid,
                         run_id=self._run,
                     ),
-                    epoch=int(epoch),
-                    total_epochs=int(total_epochs),
-                    batch=int(batch),
-                    total_batches=int(total_batches),
-                    batch_loss=float(batch_loss),
-                    batch_acc=float(batch_acc),
-                    avg_loss=float(avg_loss),
-                    samples_per_sec=float(samples_per_sec),
+                    metrics,
                 )
                 self._publisher.publish(self._channel, ev.encode_event(msg))
         except (OSError, ValueError):
