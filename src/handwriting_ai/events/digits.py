@@ -6,6 +6,33 @@ from datetime import UTC, datetime
 from typing import Literal, TypedDict
 
 
+@dataclass(frozen=True)
+class BatchMetrics:
+    """Single source of truth for batch progress metrics.
+
+    This dataclass defines all batch-level metrics exactly once.
+    All other schemas, protocols, and function signatures derive from this.
+    """
+
+    epoch: int
+    total_epochs: int
+    batch: int
+    total_batches: int
+    batch_loss: float
+    batch_acc: float
+    avg_loss: float
+    samples_per_sec: float
+    # Memory metrics (from cgroup-aware monitoring)
+    main_rss_mb: int
+    workers_rss_mb: int
+    worker_count: int
+    cgroup_usage_mb: int
+    cgroup_limit_mb: int
+    cgroup_pct: float
+    anon_mb: int
+    file_mb: int
+
+
 class StartedV1(TypedDict):
     type: Literal["digits.train.started.v1"]
     request_id: str
@@ -43,6 +70,15 @@ class BatchV1(TypedDict):
     batch_acc: float
     avg_loss: float
     samples_per_sec: float
+    # Memory metrics (from cgroup-aware monitoring)
+    main_rss_mb: int
+    workers_rss_mb: int
+    worker_count: int
+    cgroup_usage_mb: int
+    cgroup_limit_mb: int
+    cgroup_pct: float
+    anon_mb: int
+    file_mb: int
 
 
 class EpochV1(TypedDict):
@@ -216,18 +252,11 @@ def epoch(
     }
 
 
-def batch(
-    ctx: Context,
-    *,
-    epoch: int,
-    total_epochs: int,
-    batch: int,
-    total_batches: int,
-    batch_loss: float,
-    batch_acc: float,
-    avg_loss: float,
-    samples_per_sec: float,
-) -> BatchV1:
+def batch(ctx: Context, metrics: BatchMetrics) -> BatchV1:
+    """Build batch event from metrics dataclass.
+
+    Single source of truth: BatchMetrics dataclass defines all fields.
+    """
     return {
         "type": "digits.train.batch.v1",
         "request_id": ctx.request_id,
@@ -235,14 +264,23 @@ def batch(
         "model_id": ctx.model_id,
         "run_id": ctx.run_id,
         "ts": _ts(),
-        "epoch": int(epoch),
-        "total_epochs": int(total_epochs),
-        "batch": int(batch),
-        "total_batches": int(total_batches),
-        "batch_loss": float(batch_loss),
-        "batch_acc": float(batch_acc),
-        "avg_loss": float(avg_loss),
-        "samples_per_sec": float(samples_per_sec),
+        # Extract all batch metrics from dataclass with proper type conversion
+        "epoch": int(metrics.epoch),
+        "total_epochs": int(metrics.total_epochs),
+        "batch": int(metrics.batch),
+        "total_batches": int(metrics.total_batches),
+        "batch_loss": float(metrics.batch_loss),
+        "batch_acc": float(metrics.batch_acc),
+        "avg_loss": float(metrics.avg_loss),
+        "samples_per_sec": float(metrics.samples_per_sec),
+        "main_rss_mb": int(metrics.main_rss_mb),
+        "workers_rss_mb": int(metrics.workers_rss_mb),
+        "worker_count": int(metrics.worker_count),
+        "cgroup_usage_mb": int(metrics.cgroup_usage_mb),
+        "cgroup_limit_mb": int(metrics.cgroup_limit_mb),
+        "cgroup_pct": float(metrics.cgroup_pct),
+        "anon_mb": int(metrics.anon_mb),
+        "file_mb": int(metrics.file_mb),
     }
 
 
