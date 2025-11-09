@@ -112,6 +112,11 @@ show_missing = true
 handai-rq-worker = "scripts.rq_worker:main"
 
 [[tool.mypy.overrides]]
+module = ["handwriting_ai.monitoring"]
+# psutil stubs return Any for memory_info() and related methods
+disallow_any_expr = false
+
+[[tool.mypy.overrides]]
 module = [
   "scripts.train_mnist_resnet18",
   "scripts.worker",
@@ -138,18 +143,3 @@ disallow_untyped_calls = false
 check_untyped_defs = false
 warn_return_any = false
 
-[[tool.mypy.overrides]]
-module = [
-  "handwriting_ai.monitoring",
-  "tests.test_training_memory_logging",
-]
-ignore_missing_imports = true
-disallow_any_unimported = false
-disallow_any_expr = false
-disallow_any_generics = false
-disallow_any_decorated = false
-disallow_any_explicit = false
-disallow_untyped_defs = false
-disallow_untyped_calls = false
-check_untyped_defs = false
-warn_return_any = false
