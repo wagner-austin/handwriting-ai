@@ -10,7 +10,7 @@ from torch import Tensor
 from torch.utils.data import DataLoader, Dataset
 
 from handwriting_ai.logging import get_logger, init_logging
-from handwriting_ai.monitoring import log_system_info
+from handwriting_ai.monitoring import log_memory_snapshot, log_system_info
 
 from .artifacts import write_artifacts as _write_artifacts_impl
 from .calibrate import calibrate_input_pipeline
@@ -58,6 +58,7 @@ def _run_training_loop(
         reset_memory_guard()
         t0 = _time.perf_counter()
         log.info(f"epoch_start_{ep}_{cfg.epochs}")
+        log_memory_snapshot(context="epoch_start")
         train_loss = _train_epoch(
             model,
             train_loader,
@@ -67,12 +68,15 @@ def _run_training_loop(
             ep_total=cfg.epochs,
             total_batches=len(train_loader),
         )
+        log_memory_snapshot(context="train_epoch_done")
         val_acc = _evaluate(model, test_loader, device)
+        log_memory_snapshot(context="validation_done")
         dt = _time.perf_counter() - t0
         log.info(
             f"epoch_done idx={ep} train_loss={train_loss:.4f} "
             f"val_acc={val_acc:.4f} time_s={dt:.1f}"
         )
+        log_memory_snapshot(context="epoch_done")
         _emit_epoch(
             epoch=ep,
             total_epochs=cfg.epochs,
