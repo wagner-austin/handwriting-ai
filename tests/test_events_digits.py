@@ -33,14 +33,24 @@ def test_encode_all_event_builders_cover_fields() -> None:
 
     b = ev.batch(
         ctx,
-        epoch=1,
-        total_epochs=2,
-        batch=3,
-        total_batches=10,
-        batch_loss=0.5,
-        batch_acc=0.9,
-        avg_loss=0.6,
-        samples_per_sec=100.0,
+        ev.BatchMetrics(
+            epoch=1,
+            total_epochs=2,
+            batch=3,
+            total_batches=10,
+            batch_loss=0.5,
+            batch_acc=0.9,
+            avg_loss=0.6,
+            samples_per_sec=100.0,
+            main_rss_mb=100,
+            workers_rss_mb=50,
+            worker_count=2,
+            cgroup_usage_mb=500,
+            cgroup_limit_mb=1000,
+            cgroup_pct=50.0,
+            anon_mb=200,
+            file_mb=150,
+        ),
     )
     assert b["type"] == "digits.train.batch.v1"
     assert b["batch"] == 3
