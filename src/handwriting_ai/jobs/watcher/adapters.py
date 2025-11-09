@@ -67,7 +67,6 @@ else:  # pragma: no cover - runtime only
 
         return rq.registry.StartedJobRegistry(queue=queue)
 
-
     def rq_canceled_registry(queue: RQQueueProto) -> RQRegistryProto:
         import rq
 
