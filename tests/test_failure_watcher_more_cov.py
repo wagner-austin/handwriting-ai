@@ -380,7 +380,6 @@ def test_stuck_job_paths() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg4,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch4,
         coerce_job_ids=logic.coerce_job_ids,
@@ -419,7 +418,6 @@ def test_stuck_job_fetch_error_raises() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch_fail,
         coerce_job_ids=logic.coerce_job_ids,
@@ -447,7 +445,6 @@ def test_stopped_and_canceled_seen_early_return() -> None:
 
     def _failed(_q: RQQueueProto) -> RQRegistryProto:
         return _Reg([])
-
 
     def _canceled_reg(_q: RQQueueProto) -> RQRegistryProto:
         return _Reg(["c_seen"])
@@ -493,7 +490,6 @@ def test_stuck_seen_early_return_and_enqueued_fallback() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=lambda _q: _Reg(["sx"]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=lambda _c, _j: _Job({}, None),
         coerce_job_ids=logic.coerce_job_ids,
@@ -537,7 +533,6 @@ def test_stuck_seen_early_return_and_enqueued_fallback() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg_enq,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=lambda _c, _j: _Enq(),
         coerce_job_ids=logic.coerce_job_ids,
@@ -621,7 +616,6 @@ def test_failed_reason_raiser_propagates() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,
