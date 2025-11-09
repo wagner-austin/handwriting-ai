@@ -153,7 +153,6 @@ def test_watcher_publish_raises_and_marks() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,
@@ -191,7 +190,6 @@ def test_post_init_ports_fixed_provider() -> None:
         rq_queue=_queue,
         rq_failed_registry=lambda _q: _Reg([]),
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=lambda _c, _j: _Job({}, None),
         coerce_job_ids=logic.coerce_job_ids,
@@ -255,7 +253,6 @@ def test_stuck_job_paths() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg1,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch1,
         coerce_job_ids=logic.coerce_job_ids,
@@ -298,7 +295,6 @@ def test_stuck_job_paths() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg2,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch2,
         coerce_job_ids=logic.coerce_job_ids,
@@ -341,7 +337,6 @@ def test_stuck_job_paths() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started_reg3,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch3,
         coerce_job_ids=logic.coerce_job_ids,
@@ -453,8 +448,6 @@ def test_stopped_and_canceled_seen_early_return() -> None:
     def _failed(_q: RQQueueProto) -> RQRegistryProto:
         return _Reg([])
 
-    def _stopped_reg(_q: RQQueueProto) -> RQRegistryProto:
-        return _Reg(["s_seen"])
 
     def _canceled_reg(_q: RQQueueProto) -> RQRegistryProto:
         return _Reg(["c_seen"])
@@ -465,7 +458,6 @@ def test_stopped_and_canceled_seen_early_return() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=_stopped_reg,
         rq_canceled_registry=_canceled_reg,
         rq_fetch_job=lambda _c, _j: _Job({}, None),
         coerce_job_ids=logic.coerce_job_ids,

@@ -98,7 +98,6 @@ def _build_ports_for_oom(conn: RedisDebugClientProto, jid: str) -> WatcherPorts:
         rq_queue=_queue,
         rq_failed_registry=_reg,
         rq_started_registry=_started_reg,
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,

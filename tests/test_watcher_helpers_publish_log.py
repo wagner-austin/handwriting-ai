@@ -69,7 +69,6 @@ def _ports() -> WatcherPorts:
         rq_queue=lambda c, n: object(),
         rq_failed_registry=lambda _q: _Reg([]),
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=lambda _c, _j: _Job({}, None),
         coerce_job_ids=logic.coerce_job_ids,

@@ -74,7 +74,6 @@ def _make_ports(
     *,
     failed_reg: RQRegistryProto | None = None,
     started_reg: RQRegistryProto | None = None,
-    stopped_reg: RQRegistryProto | None = None,
     canceled_reg: RQRegistryProto | None = None,
     fetch_job: Callable[[RedisDebugClientProto, str], RQJobProto] | None = None,
 ) -> WatcherPorts:
@@ -94,7 +93,6 @@ def _make_ports(
     conn_default: RedisDebugClientProto = _Conn()
     fr: RQRegistryProto = failed_reg if failed_reg is not None else _Reg([])
     sr: RQRegistryProto = started_reg if started_reg is not None else _Reg([])
-    stopr: RQRegistryProto = stopped_reg if stopped_reg is not None else _Reg([])
     cancr: RQRegistryProto = canceled_reg if canceled_reg is not None else _Reg([])
 
     def _conn(_url: str) -> RedisDebugClientProto:
@@ -125,7 +123,6 @@ def _make_ports(
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started,
-        rq_stopped_registry=_stopped,
         rq_canceled_registry=_canceled,
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,
@@ -134,34 +131,6 @@ def _make_ports(
         summarize_exc_info=logic.summarize_exc_info,
         make_logger=logic.make_logger,
     )
-
-
-def test_stopped_job_publishes() -> None:
-    pub = _Pub()
-    store = _Store()
-
-    def _fetch(_c: RedisDebugClientProto, jid: str) -> RQJobProto:
-        assert jid == "s1"
-        payload = {"type": "digits.train.v1", "request_id": "r2", "user_id": 7, "model_id": "m2"}
-        return _Job(payload, exc_info=None)
-
-    ports = _make_ports(
-        failed_reg=_Reg([]),
-        started_reg=_Reg([]),
-        stopped_reg=_Reg(["s1"]),
-        fetch_job=lambda c, j: _fetch(c, j),
-    )
-
-    fw = FWatcher("redis://", "digits", "digits:events", publisher=pub, store=store, ports=ports)
-    fw.scan_once()
-    assert len(pub.items) == 1
-    ch, msg = pub.items[0]
-    assert ch == "digits:events"
-    evt: dict[str, object] = json.loads(msg)
-    assert evt.get("type") == "digits.train.failed.v1"
-    assert evt.get("request_id") == "r2"
-    assert evt.get("user_id") == 7
-    assert evt.get("model_id") == "m2"
 
 
 def test_canceled_job_publishes() -> None:
@@ -189,30 +158,14 @@ def test_canceled_job_publishes() -> None:
     assert evt.get("message") == "Job canceled"
 
 
+
+
 def test_stopped_and_canceled_fetch_errors_raise() -> None:
     pub = _Pub()
     store = _Store()
 
     def _fetch_fail(_c: RedisDebugClientProto, _jid: str) -> RQJobProto:
         raise RuntimeError("missing job")
-
-    # Stopped
-    ports_s = _make_ports(
-        failed_reg=_Reg([]),
-        started_reg=_Reg([]),
-        stopped_reg=_Reg(["s2"]),
-        fetch_job=_fetch_fail,
-    )
-    fw_s = FWatcher(
-        "redis://",
-        "digits",
-        "digits:events",
-        publisher=pub,
-        store=store,
-        ports=ports_s,
-    )
-    with pytest.raises(RuntimeError):
-        fw_s.scan_once()
 
     # Canceled
     ports_c = _make_ports(
@@ -239,9 +192,8 @@ def test_stopped_and_canceled_store_none_short_circuit() -> None:
     fw = FWatcher("redis://", "digits", "digits:events", publisher=pub, store=None)
     # Ensure store is None (constructor populates default when None is passed)
     fw.store = None
-    # Directly call internal methods to exercise early returns
+    # Directly call internal method to exercise early return
     c = _Conn()
-    fw._process_stopped_job(c, "jid")
     fw._process_canceled_job(c, "jid")
     assert pub.items == []
 
@@ -258,12 +210,11 @@ def test_stopped_and_canceled_no_publisher_paths() -> None:
     fw = FWatcher("redis://", "digits", "digits:events", publisher=None, store=store, ports=ports)
     # Ensure publisher remains None (constructor populates default otherwise)
     fw.publisher = None
-    # Call internal handlers directly with no publisher
+    # Call internal handler directly with no publisher
     c = _Conn()
-    fw._process_stopped_job(c, "jidX")
     fw._process_canceled_job(c, "jidY")
-    # Both should be marked; nothing published
-    assert "jidX" in store.seen_ids and "jidY" in store.seen_ids
+    # Should be marked; nothing published
+    assert "jidY" in store.seen_ids
 
 
 def test_store_and_publisher_factory_fail_raise() -> None:
@@ -290,7 +241,6 @@ def test_store_and_publisher_factory_fail_raise() -> None:
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=lambda _q: _Reg([]),
-        rq_stopped_registry=lambda _q: _Reg([]),
         rq_canceled_registry=lambda _q: _Reg([]),
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,

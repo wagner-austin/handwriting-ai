@@ -70,7 +70,6 @@ def _make_ports(
     queue: RQQueueProto | None = None,
     failed_reg: RQRegistryProto | None = None,
     started_reg: RQRegistryProto | None = None,
-    stopped_reg: RQRegistryProto | None = None,
     canceled_reg: RQRegistryProto | None = None,
     fetch_job: Callable[[RedisDebugClientProto, str], RQJobProto] | None = None,
 ) -> WatcherPorts:
@@ -98,7 +97,6 @@ def _make_ports(
     queue_default: RQQueueProto = queue if queue is not None else object()
     fr: RQRegistryProto = failed_reg if failed_reg is not None else _Reg([])
     sr: RQRegistryProto = started_reg if started_reg is not None else _Reg([])
-    stopr: RQRegistryProto = stopped_reg if stopped_reg is not None else _Reg([])
     cancr: RQRegistryProto = canceled_reg if canceled_reg is not None else _Reg([])
 
     def _conn(_url: str) -> RedisDebugClientProto:
@@ -129,7 +127,6 @@ def _make_ports(
         rq_queue=_queue,
         rq_failed_registry=_failed,
         rq_started_registry=_started,
-        rq_stopped_registry=_stopped,
         rq_canceled_registry=_canceled,
         rq_fetch_job=_fetch,
         coerce_job_ids=logic.coerce_job_ids,

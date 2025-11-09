@@ -23,7 +23,6 @@ Environment variables:
 
 - Polls `FailedJobRegistry` for explicit failures.
 - Polls `StartedJobRegistry` for stuck jobs that exceed a timeout (e.g., worker OOM-killed).
-- Polls `StoppedJobRegistry` for jobs stopped by the worker.
 - Polls `CanceledJobRegistry` for user/system canceled jobs and emits a user-kind failed event.
 - For each new failed job ID, fetches the job and extracts `request_id`, `user_id`, `model_id`
   (when present) from the payload.

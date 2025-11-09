@@ -83,6 +83,9 @@ class FailureWatcher:
         started_ids = ports.coerce_job_ids(ports.rq_started_registry(q).get_job_ids())
         _process_registry("started", started_ids, self._process_stuck_job)
 
+        stopped_ids = ports.coerce_job_ids(ports.rq_stopped_registry(q).get_job_ids())
+        _process_registry("stopped", stopped_ids, self._process_stopped_job)
+
         canceled_ids = ports.coerce_job_ids(ports.rq_canceled_registry(q).get_job_ids())
         _process_registry("canceled", canceled_ids, self._process_canceled_job)
 
@@ -182,6 +185,35 @@ class FailureWatcher:
         )
         self._publish_and_mark(evt, jid)
 
+    def _process_stopped_job(self, conn: RedisDebugClientProto, jid: str) -> None:
+        st = self.store
+        if st is None:
+            return
+        if st.seen(jid):
+            return
+        assert self.ports_provider is not None
+        p = self.ports_provider()
+        try:
+            job = p.rq_fetch_job(conn, jid)
+        except (RuntimeError, ValueError, TypeError, OSError) as e:
+            logging.getLogger("handwriting_ai").error(
+                "rq_fetch_stopped_job_error jid=%s error=%s", jid, str(e)
+            )
+            raise
+        payload = p.extract_payload(job)
+        request_id = str(payload.get("request_id") or "")
+        user_id_obj: object | None = payload.get("user_id")
+        user_id = user_id_obj if isinstance(user_id_obj, int) else 0
+        model_id = str(payload.get("model_id") or "")
+        reason = p.detect_failed_reason(conn, jid)
+        message = reason if isinstance(reason, str) and reason.strip() else "Job stopped by worker"
+        evt = ev.failed(
+            ev.Context(request_id=request_id, user_id=int(user_id), model_id=model_id, run_id=None),
+            error_kind="system",
+            message=message,
+        )
+        self._publish_and_mark(evt, jid)
+
     def _process_canceled_job(self, conn: RedisDebugClientProto, jid: str) -> None:
         st = self.store
         if st is None:
@@ -241,3 +273,4 @@ class FailureWatcher:
                     exc_info=True,
                 )
             time.sleep(max(0.1, float(self.poll_interval_s)))
+

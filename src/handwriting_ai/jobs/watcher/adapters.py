@@ -31,7 +31,6 @@ if TYPE_CHECKING:
     def rq_queue(conn: RedisDebugClientProto, name: str) -> RQQueueProto: ...
     def rq_failed_registry(queue: RQQueueProto) -> RQRegistryProto: ...
     def rq_started_registry(queue: RQQueueProto) -> RQRegistryProto: ...
-    def rq_stopped_registry(queue: RQQueueProto) -> RQRegistryProto: ...
     def rq_canceled_registry(queue: RQQueueProto) -> RQRegistryProto: ...
     def rq_fetch_job(conn: RedisDebugClientProto, job_id: str) -> RQJobProto: ...
 
@@ -68,18 +67,6 @@ else:  # pragma: no cover - runtime only
 
         return rq.registry.StartedJobRegistry(queue=queue)
 
-    def rq_stopped_registry(queue: RQQueueProto) -> RQRegistryProto:
-        import rq
-
-        if not hasattr(queue, "name"):
-            logging.getLogger("handwriting_ai").error("rq_stopped_registry_invalid_queue")
-            raise TypeError("Invalid RQ queue provided")
-        reg = getattr(rq, "registry", None)
-        cls = getattr(reg, "StoppedJobRegistry", None)
-        if cls is None:
-            logging.getLogger("handwriting_ai").error("rq_stopped_registry_unavailable")
-            raise RuntimeError("RQ StoppedJobRegistry is unavailable")
-        return cls(queue=queue)
 
     def rq_canceled_registry(queue: RQQueueProto) -> RQRegistryProto:
         import rq

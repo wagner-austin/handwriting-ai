@@ -35,7 +35,6 @@ class WatcherPorts:
     rq_queue: Callable[[_RedisDebugClientProto, str], _RQQueueProto]
     rq_failed_registry: Callable[[_RQQueueProto], _RQRegistryProto]
     rq_started_registry: Callable[[_RQQueueProto], _RQRegistryProto]
-    rq_stopped_registry: Callable[[_RQQueueProto], _RQRegistryProto]
     rq_canceled_registry: Callable[[_RQQueueProto], _RQRegistryProto]
     rq_fetch_job: Callable[[_RedisDebugClientProto, str], _RQJobProto]
 
@@ -56,7 +55,6 @@ def make_default_ports() -> WatcherPorts:
         rq_queue=adapters.rq_queue,
         rq_failed_registry=adapters.rq_failed_registry,
         rq_started_registry=adapters.rq_started_registry,
-        rq_stopped_registry=adapters.rq_stopped_registry,
         rq_canceled_registry=adapters.rq_canceled_registry,
         rq_fetch_job=adapters.rq_fetch_job,
         coerce_job_ids=logic.coerce_job_ids,
