@@ -1,6 +1,6 @@
 # Handwriting AI (Digits Service) – Foundation
 
-This repo hosts a standalone HTTP service for MNIST digit inference that the Discord bot calls. The service is implemented with FastAPI and includes strict typing, standardized error handling, and robust preprocessing/inference.
+This repo hosts: a standalone HTTP service for MNIST digit inference that the Discord bot calls. The service is implemented with FastAPI and includes strict typing, standardized error handling, and robust preprocessing/inference.
 
 Quality Gates
 - Make targets:
