@@ -30,6 +30,14 @@ class _Store:
         self.seen_ids.add(job_id)
 
 
+class _Reg:
+    def __init__(self, ids: list[str]) -> None:
+        self._ids = ids
+
+    def get_job_ids(self) -> list[str]:
+        return list(self._ids)
+
+
 class _JobNoExc:
     args: ClassVar[list[dict[str, object]]] = [
         {"request_id": "r-oom", "user_id": 7, "model_id": "m"}
@@ -63,7 +71,7 @@ def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.Mon
     def _mk_conn(_url: str) -> object:
         return conn
 
-    class _Reg:
+    class _FailedReg:
         def get_job_ids(self) -> list[str]:
             return [jid]
 
@@ -71,7 +79,10 @@ def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.Mon
         return object()
 
     def _reg(_q: object) -> object:
-        return _Reg()
+        return _FailedReg()
+
+    def _started_reg(_q: object) -> object:
+        return _Reg([])  # no started jobs
 
     def _fetch(_c: object, _jid: str) -> object:
         return _JobNoExc()
@@ -79,6 +90,7 @@ def test_failure_watcher_uses_redis_reason_to_detect_oom(monkeypatch: pytest.Mon
     monkeypatch.setattr(mod, "_rq_connect", _mk_conn, raising=True)
     monkeypatch.setattr(mod, "_rq_queue", _queue, raising=True)
     monkeypatch.setattr(mod, "_rq_failed_registry", _reg, raising=True)
+    monkeypatch.setattr(mod, "_rq_started_registry", _started_reg, raising=True)
     monkeypatch.setattr(mod, "_rq_fetch_job", _fetch, raising=True)
 
     fw = FWatcher(

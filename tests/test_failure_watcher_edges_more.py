@@ -47,6 +47,14 @@ class _Store:
         self.seen_ids.add(job_id)
 
 
+class _Reg:
+    def __init__(self, ids: list[str]) -> None:
+        self._ids = ids
+
+    def get_job_ids(self) -> list[str]:
+        return list(self._ids)
+
+
 def test_scan_once_continue_on_non_str_jid_via_monkeypatch(monkeypatch: pytest.MonkeyPatch) -> None:
     # Force list containing a non-string to cover the continue branch inside the loop
     pub = _Pub()
@@ -58,7 +66,7 @@ def test_scan_once_continue_on_non_str_jid_via_monkeypatch(monkeypatch: pytest.M
     def _queue(_c: object, _n: str) -> object:
         return object()
 
-    class _Reg:
+    class _FailedReg:
         def get_job_ids(self) -> list[str]:
             return ["unused"]
 
@@ -77,9 +85,13 @@ def test_scan_once_continue_on_non_str_jid_via_monkeypatch(monkeypatch: pytest.M
     monkeypatch.setattr(mod, "_rq_queue", _queue, raising=True)
 
     def _mk_reg(_q: object) -> object:
-        return _Reg()
+        return _FailedReg()
+
+    def _started_reg(_q: object) -> object:
+        return _Reg([])  # no started jobs
 
     monkeypatch.setattr(mod, "_rq_failed_registry", _mk_reg, raising=True)
+    monkeypatch.setattr(mod, "_rq_started_registry", _started_reg, raising=True)
     monkeypatch.setattr(mod, "_rq_fetch_job", _fetch, raising=True)
 
     # Force _coerce_job_ids to return one non-string and one valid string id
