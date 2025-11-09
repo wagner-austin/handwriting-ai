@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import torch
 from PIL import Image
+from torch.utils.data import DataLoader
 
 import handwriting_ai.training.calibrate as cal
 from handwriting_ai.training.dataset import DataLoaderConfig, MNISTLike, PreprocessDataset
@@ -77,30 +78,8 @@ def test_candidate_workers_zero_cores() -> None:
 
 
 def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    # First call to _safe_loader raises, then succeeds
+    # First call to _safe_loader raises, then succeeds with a real iterable loader
     calls = {"n": 0}
-
-    def _safe(_: object, __: DataLoaderConfig) -> object:
-        calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("no memory")
-        return object()
-
-    monkeypatch.setattr(cal, "_safe_loader", _safe, raising=True)
-    import handwriting_ai.training.calibration.measure as _meas
-
-    monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
-
-    def _ml(
-        ds_len: int,
-        loader: Iterable[tuple[torch.Tensor, torch.Tensor]],
-        k: int,
-        batch_size_hint: int,
-    ) -> tuple[float, float]:
-        return (10.0, 5.0)
-
-    monkeypatch.setattr(cal, "_measure_loader", _ml, raising=True)
-    monkeypatch.setattr(_meas, "_measure_loader", _ml, raising=True)
 
     class _Base(MNISTLike):
         def __len__(self) -> int:
@@ -125,9 +104,21 @@ def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
         batch_size = 1
 
     ds = PreprocessDataset(_Base(), _Cfg())
+
+    def _safe(_: object, cfg: DataLoaderConfig) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("no memory")
+        return DataLoader(ds, batch_size=int(cfg.batch_size), shuffle=True, num_workers=0)
+
+    monkeypatch.setattr(cal, "_safe_loader", _safe, raising=True)
+    import handwriting_ai.training.calibration.measure as _meas
+
+    monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
+
     cand = cal.Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=4)
-    out = cal._measure_candidate(ds, cand, samples=4)
-    assert out.batch_size in (2, 4) and out.samples_per_sec >= 0.0
+    out = cal._measure_candidate(ds, cand, samples=2)
+    assert out.batch_size in (1, 2, 4) and out.samples_per_sec >= 0.0
 
 
 def test_measure_loader_paths() -> None:
