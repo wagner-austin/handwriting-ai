@@ -14,6 +14,8 @@ from handwriting_ai.training.resources import ResourceLimits
 
 
 def test_as_obj_dict_and_number_parsers() -> None:
+    import pytest
+
     assert cal._as_obj_dict(123) is None
     d = cal._as_obj_dict({1: "x", "a": 7})
     assert d == {"a": 7}
@@ -21,27 +23,40 @@ def test_as_obj_dict_and_number_parsers() -> None:
     assert cal._get_int({}, "k", 5) == 5
     assert cal._get_int({"k": True}, "k", 5) == 5
     assert cal._get_int({"k": "7"}, "k", 5) == 7
-    assert cal._get_int({"k": "bad"}, "k", 5) == 5
+    # Should raise ValueError for non-numeric string
+    with pytest.raises(ValueError):
+        cal._get_int({"k": "bad"}, "k", 5)
 
     assert cal._get_float({}, "k", 1.5) == 1.5
     assert cal._get_float({"k": False}, "k", 1.5) == 1.5
     assert cal._get_float({"k": "2.5"}, "k", 1.5) == 2.5
-    assert cal._get_float({"k": "not"}, "k", 1.5) == 1.5
+    # Should raise ValueError for non-numeric string
+    with pytest.raises(ValueError):
+        cal._get_float({"k": "not"}, "k", 1.5)
 
 
-def test_read_cache_decode_and_missing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_read_cache_decode_and_missing_raises_after_logging(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    import pytest
+
     p = tmp_path / "c.json"
     p.write_text("not-json", encoding="utf-8")
-    assert cal._read_cache(p) is None
+    # Should raise on invalid JSON
+    with pytest.raises((OSError, ValueError, TypeError)):
+        cal._read_cache(p)
 
     p2 = tmp_path / "c2.json"
     p2.write_text("{}", encoding="utf-8")
-    assert cal._read_cache(p2) is None
+    # Empty dict should raise (missing signature)
+    with pytest.raises((OSError, ValueError, TypeError)):
+        cal._read_cache(p2)
 
-    # Non-dict JSON yields root None branch
+    # Non-dict JSON should raise
     p3 = tmp_path / "c3.json"
     p3.write_text("[]", encoding="utf-8")
-    assert cal._read_cache(p3) is None
+    with pytest.raises((OSError, ValueError, TypeError)):
+        cal._read_cache(p3)
 
 
 def test_valid_cache_mismatch_and_expire(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -77,8 +92,10 @@ def test_candidate_workers_zero_cores() -> None:
     ) == [0]
 
 
-def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    # First call to _safe_loader raises, then succeeds with a real iterable loader
+def test_measure_candidate_backoff_raises_after_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First call to _safe_loader raises, subsequent calls also raise to exhaust backoff
+    import pytest
+
     calls = {"n": 0}
 
     class _Base(MNISTLike):
@@ -107,9 +124,7 @@ def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
 
     def _safe(_: object, cfg: DataLoaderConfig) -> DataLoader[tuple[torch.Tensor, torch.Tensor]]:
         calls["n"] += 1
-        if calls["n"] == 1:
-            raise RuntimeError("no memory")
-        return DataLoader(ds, batch_size=int(cfg.batch_size), shuffle=True, num_workers=0)
+        raise RuntimeError("no memory")
 
     monkeypatch.setattr(cal, "_safe_loader", _safe, raising=True)
     import handwriting_ai.training.calibration.measure as _meas
@@ -117,8 +132,9 @@ def test_measure_candidate_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
 
     cand = cal.Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=4)
-    out = cal._measure_candidate(ds, cand, samples=2)
-    assert out.batch_size in (1, 2, 4) and out.samples_per_sec >= 0.0
+    # Should raise after exhausting backoff attempts
+    with pytest.raises(RuntimeError, match="no memory"):
+        cal._measure_candidate(ds, cand, samples=2)
 
 
 def test_measure_loader_paths() -> None:
@@ -205,8 +221,10 @@ def test_measure_candidate_interop_branch(monkeypatch: pytest.MonkeyPatch) -> No
     _ = cal._measure_candidate(ds, cand, samples=1)
 
 
-def test_measure_candidate_exhausts_backoff(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Always raise to force while-loop to terminate via bs_try < 1 path
+def test_measure_candidate_exhausts_backoff_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Always raise to force while-loop to exhaust backoff
+    import pytest
+
     def _safe(_: object, __: DataLoaderConfig) -> object:
         raise RuntimeError("no memory")
 
@@ -214,16 +232,6 @@ def test_measure_candidate_exhausts_backoff(monkeypatch: pytest.MonkeyPatch) -> 
     import handwriting_ai.training.calibration.measure as _meas
 
     monkeypatch.setattr(_meas, "_safe_loader", _safe, raising=True)
-
-    def _ml2(
-        ds_len: int,
-        loader: Iterable[tuple[torch.Tensor, torch.Tensor]],
-        k: int,
-        batch_size_hint: int,
-    ) -> tuple[float, float]:
-        return (0.0, 0.0)
-
-    monkeypatch.setattr(cal, "_measure_loader", _ml2, raising=True)
 
     class _Base(MNISTLike):
         def __len__(self) -> int:
@@ -248,8 +256,9 @@ def test_measure_candidate_exhausts_backoff(monkeypatch: pytest.MonkeyPatch) -> 
 
     ds = PreprocessDataset(_Base(), _Cfg())
     cand = cal.Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=1)
-    out = cal._measure_candidate(ds, cand, samples=1)
-    assert out.batch_size >= 1
+    # Should raise after exhausting backoff
+    with pytest.raises(RuntimeError, match="no memory"):
+        cal._measure_candidate(ds, cand, samples=1)
 
 
 def test_measure_loader_empty_iterable() -> None:
