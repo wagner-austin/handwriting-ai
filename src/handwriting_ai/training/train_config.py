@@ -43,7 +43,5 @@ class TrainConfig:
     calibrate: bool = False
     calibration_samples: int = 8
     force_calibration: bool = False
-    # Memory guard (proactive OOM prevention)
+    # Memory guard (proactive OOM prevention) - threshold auto-computed from available memory
     memory_guard: bool = True
-    mem_guard_threshold_pct: float = 92.0
-    mem_guard_required_checks: int = 3
