@@ -24,7 +24,12 @@ from .progress import set_batch_cadence as _set_batch_cadence
 from .progress import set_progress_emitter as _set_progress_emitter
 from .resources import ResourceLimits
 from .runtime import apply_threads, build_effective_config
-from .safety import MemoryGuardConfig, reset_memory_guard, set_memory_guard_config
+from .safety import (
+    MemoryGuardConfig,
+    compute_memory_guard_config,
+    reset_memory_guard,
+    set_memory_guard_config,
+)
 from .train_config import TrainConfig
 from .train_types import MNISTLike, TrainableModel
 from .train_utils import _apply_affine, _build_model, _configure_threads, _ensure_image, _set_seed
@@ -267,28 +272,44 @@ def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
     _set_progress_emitter(emitter)
 
 
+def _memory_tier_name(memory_bytes: int | None) -> str:
+    """Return human-readable tier name for logging."""
+    if memory_bytes is None:
+        return "unlimited"
+    gb = float(memory_bytes) / (1024.0 * 1024.0 * 1024.0)
+    if gb < 1.0:
+        return "sub_1gb"
+    if gb < 2.0:
+        return "1_2gb"
+    if gb < 4.0:
+        return "2_4gb"
+    return "4gb_plus"
+
+
 def _configure_memory_guard_from_limits(cfg: TrainConfig, limits: ResourceLimits) -> None:
-    # Configure memory guard from limits + cfg toggle
-    mg_enabled = bool(cfg.memory_guard)
-    thr = float(cfg.mem_guard_threshold_pct)
-    req = max(1, int(cfg.mem_guard_required_checks))
-    # Be more conservative on very small memory limits
-    if isinstance(limits.memory_bytes, int):
-        gb = limits.memory_bytes / (1024 * 1024 * 1024)
-        if gb < 2.0:
-            mg_enabled = True
-            thr = min(thr, 95.0)
-            req = max(req, 3)
-    set_memory_guard_config(
-        MemoryGuardConfig(enabled=mg_enabled, threshold_percent=thr, required_consecutive=req)
-    )
-    # Emit configuration for observability and to prevent drift between guard and logs
+    """Configure memory guard from available memory. Threshold is computed, not configurable."""
+    if not cfg.memory_guard:
+        # User explicitly disabled
+        set_memory_guard_config(
+            MemoryGuardConfig(enabled=False, threshold_percent=0.0, required_consecutive=0)
+        )
+        log = get_logger()
+        log.info("mem_guard_config enabled=False user_disabled=True")
+        return
+
+    # Compute from available memory
+    config = compute_memory_guard_config(limits.memory_bytes)
+    set_memory_guard_config(config)
+
     log = get_logger()
+    mem_gb = (limits.memory_bytes / (1024.0**3)) if limits.memory_bytes else 0.0
     log.info(
-        "mem_guard_config enabled=%s threshold_percent=%.1f required_consecutive=%d",
-        mg_enabled,
-        thr,
-        req,
+        "mem_guard_config enabled=True threshold_percent=%.1f required_consecutive=%d "
+        "memory_gb=%.2f tier=%s",
+        config.threshold_percent,
+        config.required_consecutive,
+        mem_gb,
+        _memory_tier_name(limits.memory_bytes),
     )
 
 
