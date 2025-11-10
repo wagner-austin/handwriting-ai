@@ -173,6 +173,8 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
             logging.getLogger("handwriting_ai").error("set_num_interop_threads_failed msg=%s", exc)
 
     run_forever()
+    # Configure memory guard BEFORE calibration to protect against OOM during measurement
+    _configure_memory_guard_from_limits(cfg, limits)
     # Always run empirical preflight calibration to avoid heuristic drift.
     cache_path = Path("artifacts") / "calibration.json"
     ttl_s = 7 * 24 * 60 * 60
@@ -186,7 +188,6 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
         force=bool(cfg.force_calibration),
     )
     apply_threads(ec)
-    _configure_memory_guard_from_limits(cfg, limits)
     # Centralize batch progress frequency control (Discord/consumers rely on this cadence)
     _set_batch_cadence(int(cfg.progress_every_batches))
     try:
