@@ -6,6 +6,22 @@ import pytest
 
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.training.mnist_train import TrainConfig
+from handwriting_ai.training.resources import ResourceLimits
+
+
+@pytest.fixture(autouse=True)
+def _mock_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock resource detection for Windows/non-container environments."""
+    limits = ResourceLimits(
+        cpu_cores=4,
+        memory_bytes=4 * 1024 * 1024 * 1024,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=64,
+    )
+    import handwriting_ai.training.runtime as rt
+
+    monkeypatch.setattr(rt, "detect_resource_limits", lambda: limits, raising=False)
 
 
 class _Pub:
@@ -22,7 +38,7 @@ class _BadPub:
         raise OSError("fail")
 
 
-def test_publish_event_error_branch_is_swallowed() -> None:
+def test_publish_event_error_raises_after_logging() -> None:
     evt: dj.DigitsTrainStartedEvent = {
         "type": "started",
         "request_id": "r",
@@ -30,8 +46,9 @@ def test_publish_event_error_branch_is_swallowed() -> None:
         "model_id": "m",
         "total_epochs": 1,
     }
-    # Should not raise when publisher errors
-    dj._publish_event(_BadPub(), "digits:events", evt)
+    # Should raise after logging when publisher errors
+    with pytest.raises(OSError, match="fail"):
+        dj._publish_event(_BadPub(), "digits:events", evt)
 
 
 def test_publish_event_no_publisher_noop() -> None:
@@ -65,7 +82,9 @@ def test_process_train_job_invalid_payload_fields_publishes_failed(
         "augment": False,
         "notes": None,
     }
-    dj.process_train_job(payload)
+    # Should raise ValueError after logging and publishing failed event
+    with pytest.raises(ValueError):
+        dj.process_train_job(payload)
     joined = "\n".join([m for _, m in p.sent])
     assert "digits.train.failed.v1" in joined
 
@@ -109,14 +128,16 @@ def test_emit_failed_with_non_dict_payload_defaults(monkeypatch: pytest.MonkeyPa
     assert "digits.train.failed.v1" in joined
 
 
-def test_emit_failed_v1_publish_error_swallowed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_emit_failed_v1_publish_error_raises_after_logging(monkeypatch: pytest.MonkeyPatch) -> None:
     # Ensure the v1 failed publish error path is covered
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setattr(dj, "_make_publisher", lambda: _BadPub())
-    dj._emit_failed("not-a-dict", "user", "msg")
+    # Should raise after logging
+    with pytest.raises(OSError, match="fail"):
+        dj._emit_failed("not-a-dict", "user", "msg")
 
 
-def test_versioned_publish_errors_swallowed(
+def test_versioned_publish_errors_raise_after_logging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Use a bad publisher to trigger the try/except branches around v1 event publishing
@@ -156,8 +177,9 @@ def test_versioned_publish_errors_swallowed(
         "augment": False,
         "notes": None,
     }
-    # Should not raise despite publisher errors
-    dj.process_train_job(payload)
+    # Should raise when publisher errors during started event
+    with pytest.raises(OSError, match="fail"):
+        dj.process_train_job(payload)
 
 
 def test_run_training_default_raises(tmp_path: Path) -> None:
