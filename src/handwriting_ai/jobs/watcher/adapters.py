@@ -128,3 +128,5 @@ else:  # pragma: no cover - runtime only
         if parsed.path and parsed.path.strip("/").isdigit():
             return int(parsed.path.strip("/"))
         return 0
+
+    # no additional helpers required

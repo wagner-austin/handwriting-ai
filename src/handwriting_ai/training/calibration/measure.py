@@ -183,6 +183,8 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
     """Measure a candidate using real training steps with binary search for safe batch size."""
     import logging as _logging
 
+    from handwriting_ai.monitoring import get_memory_snapshot
+
     torch.set_num_threads(int(cand.intra_threads))
     device = torch.device("cpu")
 
@@ -191,6 +193,20 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
     best_bs = 1
     best_sps: float = 0.0
     best_p95: float = 0.0
+
+    # Log initial state before binary search
+    snap_start = get_memory_snapshot()
+    mem_start_pct = float(snap_start.cgroup_usage.percent)
+    mem_start_mb = snap_start.main_process.rss_bytes // (1024 * 1024)
+    _logging.getLogger("handwriting_ai").info(
+        "calibration_candidate_start threads=%d workers=%d bs_range=[%d,%d] mem_pct=%.1f mem_mb=%d",
+        cand.intra_threads,
+        cand.num_workers,
+        bs_lo,
+        bs_hi,
+        mem_start_pct,
+        mem_start_mb,
+    )
 
     while bs_lo <= bs_hi:
         mid = (bs_lo + bs_hi) // 2
@@ -209,12 +225,22 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
             )
             if not exceeded:
                 best_bs, best_sps, best_p95 = mid, sps, p95
+                _logging.getLogger("handwriting_ai").info(
+                    "calibration_attempt_success bs=%d peak_pct=%.1f sps=%.2f new_range=[%d,%d]",
+                    mid,
+                    peak_pct,
+                    sps,
+                    mid + 1,
+                    bs_hi,
+                )
                 bs_lo = mid + 1
             else:
                 _logging.getLogger("handwriting_ai").info(
-                    "calibration_backoff reason=mem_threshold peak_pct=%.1f bs=%d",
+                    "calibration_backoff reason=mem_threshold peak_pct=%.1f bs=%d range=[%d,%d]",
                     peak_pct,
                     mid,
+                    bs_lo,
+                    mid - 1,
                 )
                 bs_hi = mid - 1
         except (RuntimeError, MemoryError) as exc:
@@ -230,6 +256,26 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
             if loader is not None:
                 del loader
             _gc.collect()
+            # Log memory after cleanup to diagnose leaks
+            snap_cleanup = get_memory_snapshot()
+            mem_cleanup_pct = float(snap_cleanup.cgroup_usage.percent)
+            mem_cleanup_mb = snap_cleanup.main_process.rss_bytes // (1024 * 1024)
+            _logging.getLogger("handwriting_ai").info(
+                "calibration_cleanup_complete bs=%d mem_pct=%.1f mem_mb=%d",
+                mid,
+                mem_cleanup_pct,
+                mem_cleanup_mb,
+            )
+
+    # Log final result
+    snap_end = get_memory_snapshot()
+    mem_end_pct = float(snap_end.cgroup_usage.percent)
+    _logging.getLogger("handwriting_ai").info(
+        "calibration_candidate_complete best_bs=%d sps=%.2f mem_pct=%.1f",
+        best_bs,
+        best_sps,
+        mem_end_pct,
+    )
 
     return CalibrationResult(
         intra_threads=cand.intra_threads,

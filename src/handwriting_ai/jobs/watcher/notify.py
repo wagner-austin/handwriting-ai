@@ -49,19 +49,16 @@ class NotificationWatcher:
         db = self.ports.redis_db_index(self.redis_url)
         prefix = f"__keyspace@{db}__"
         pats: list[str] = []
+        regs = ("failed", "scheduled", "canceled", "started")
         if any(q == "*" for q in self.queues):
-            pats.append(f"{prefix}:rq:registry:failed:*")
-            pats.append(f"{prefix}:rq:registry:scheduled:*")
-            pats.append(f"{prefix}:rq:registry:canceled:*")
-            pats.append(f"{prefix}:rq:registry:started:*")
+            for reg in regs:
+                pats.append(f"{prefix}:rq:{reg}:*")
             # Also subscribe to keyevent channel for zadd (queue filtering done in handler)
             pats.append(self._keyevent_channel())
             return pats
         for q in self.queues:
-            pats.append(f"{prefix}:rq:registry:failed:{q}")
-            pats.append(f"{prefix}:rq:registry:scheduled:{q}")
-            pats.append(f"{prefix}:rq:registry:canceled:{q}")
-            pats.append(f"{prefix}:rq:registry:started:{q}")
+            for reg in regs:
+                pats.append(f"{prefix}:rq:{reg}:{q}")
         # Always include keyevent channel; handler will filter queues
         pats.append(self._keyevent_channel())
         return pats
@@ -77,14 +74,14 @@ class NotificationWatcher:
         return queue in self.queues
 
     def _parse_keyspace(self, channel: str, data: str) -> tuple[str, str] | None:
-        # Channel format: __keyspace@<db>__:rq:registry:<reg>:<queue>
+        # Channel format: __keyspace@<db>__:rq:<reg>:<queue>
         if data.lower() != "zadd":
             return None
         parts = channel.split(":")
-        # Expect [..., 'rq', 'registry', reg, queue]
-        if len(parts) < 5:
+        # Expect [..., 'rq', reg, queue]
+        if len(parts) < 4:
             return None
-        if parts[-4] != "rq" or parts[-3] != "registry":
+        if parts[-3] != "rq":
             return None
         reg = parts[-2]
         queue = parts[-1]
@@ -92,16 +89,16 @@ class NotificationWatcher:
 
     def _parse_keyevent(self, channel: str, data: str) -> tuple[str, str] | None:
         # Channel format: __keyevent@<db>__:zadd
-        # Data is the key: rq:registry:<reg>:<queue>
+        # Data is the key: rq:<reg>:<queue>
         if not channel.endswith(":zadd"):
             return None
         parts = data.split(":")
-        if len(parts) < 4:
+        if len(parts) < 3:
             return None
-        if parts[0] != "rq" or parts[1] != "registry":
+        if parts[0] != "rq":
             return None
-        reg = parts[2]
-        queue = parts[3]
+        reg = parts[1]
+        queue = parts[2]
         return (reg, queue)
 
     def _handle_failed(self, queue: str) -> None:
@@ -190,16 +187,29 @@ class NotificationWatcher:
         assert self.ports is not None
         ps = self.ports.redis_pubsub(self.redis_url)
         try:
-            for pat in self._patterns():
+            patterns = list(self._patterns())
+            for pat in patterns:
                 ps.psubscribe(pat)
             log = logging.getLogger("handwriting_ai")
             db = self.ports.redis_db_index(self.redis_url)
-            log.info("notify_watcher_started queues=%s db=%s", ",".join(self.queues), db)
+            log.info(
+                "notify_watcher_started queues=%s db=%s patterns=%s",
+                ",".join(self.queues),
+                db,
+                patterns,
+            )
+            msg_count = 0
             while True:
                 msg = ps.get_message(ignore_subscribe_messages=True, timeout=1.0)
                 if not msg:
                     time.sleep(0.1)
                     continue
+                msg_count += 1
+                log.info(
+                    "notify_message_received count=%d channel=%s",
+                    msg_count,
+                    str(msg.get("channel")),
+                )
                 self._handle_message(msg)
         finally:
             from contextlib import suppress
@@ -209,11 +219,13 @@ class NotificationWatcher:
 
     def _handle_message(self, msg: dict[str, object]) -> None:
         """Handle a single PubSub message (pmessage) from keyspace or keyevent."""
+        log = logging.getLogger("handwriting_ai")
         ch_obj = msg.get("channel")
         data_obj = msg.get("data")
         ch = ch_obj if isinstance(ch_obj, str) else None
         data = str(data_obj) if data_obj is not None else ""
         if ch is None:
+            log.warning("notify_message_skipped reason=no_channel msg=%s", msg)
             return
 
         # Try keyspace parse first
@@ -224,6 +236,7 @@ class NotificationWatcher:
             # Try keyevent form
             parsed = self._parse_keyevent(ch, data)
             if parsed is None:
+                log.info("notify_message_skipped reason=parse_failed channel=%s data=%s", ch, data)
                 return
             source = "keyevent"
 

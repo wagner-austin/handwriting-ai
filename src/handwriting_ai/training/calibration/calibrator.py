@@ -46,6 +46,7 @@ def calibrate_input_pipeline(
     ttl_seconds: int,
     force: bool,
 ) -> EffectiveConfig:
+    log = _logging.getLogger("handwriting_ai")
     sig = _make_signature(limits)
     if not force:
         cached = _valid_cache(sig, _read_cache(cache_path), ttl_seconds)
@@ -57,12 +58,15 @@ def calibrate_input_pipeline(
 
     # Stage A: coarse evaluation across a compact candidate grid
     cands = _generate_candidates(limits, requested_batch_size)
+    log.info("calibration_stage_a_start candidates=%d samples=%d", len(cands), samples)
     stage_a: list[CalibrationResult] = [_measure_candidate(ds, c, samples) for c in cands]
+    log.info("calibration_stage_a_complete measured=%d", len(stage_a))
     stage_a.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
     shortlist = stage_a[: min(3, len(stage_a))]
 
     # Stage B: refine top candidates with a larger sample budget to reduce noise
     samples_refine = max(1, samples * 2)
+    log.info("calibration_stage_b_start shortlist=%d samples=%d", len(shortlist), samples_refine)
     refined: list[CalibrationResult] = []
     for r in shortlist:
         refined.append(
@@ -77,12 +81,11 @@ def calibrate_input_pipeline(
                 samples_refine,
             )
         )
+    log.info("calibration_stage_b_complete measured=%d", len(refined))
     refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
     best = refined[0]
 
     # Emit a concise calibration report (top 3 + chosen)
-    log = _logging.getLogger("handwriting_ai")
-
     def _fmt(r: CalibrationResult) -> str:
         return (
             f"threads={r.intra_threads} workers={r.num_workers} bs={r.batch_size} "
