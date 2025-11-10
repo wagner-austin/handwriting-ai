@@ -117,8 +117,8 @@ def test_notify_watcher_handles_failed_event() -> None:
     # Message structure from redis-py pubsub
     msg: dict[str, object] = {
         "type": "pmessage",
-        "pattern": "__keyspace@0__:rq:registry:failed:digits",
-        "channel": "__keyspace@0__:rq:registry:failed:digits",
+        "pattern": "__keyspace@0__:rq:failed:digits",
+        "channel": "__keyspace@0__:rq:failed:digits",
         "data": "zadd",
     }
     w._handle_message(msg)
