@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc as _gc
 from collections.abc import Iterable as _Iter
 from dataclasses import dataclass
 from statistics import quantiles
@@ -112,68 +113,74 @@ def _measure_training(
 
     opt, _sch = _build_optim(model, _OptimCfg())
 
-    # Warm-up a single batch to initialize optimizer state sizes (no exceptions)
-    it = iter(loader)
-    first = next(it, None)
-    if first is None:
-        import logging as _logging
+    try:
+        # Warm-up a single batch to initialize optimizer state sizes (no exceptions)
+        it = iter(loader)
+        first = next(it, None)
+        if first is None:
+            import logging as _logging
 
-        _logging.getLogger("handwriting_ai").info("calibration_no_samples")
-        return 0.0, 0.0, 0.0, False
-    x0, y0 = first
-    x0 = x0.to(device)
-    y0 = y0.to(device)
-    opt.zero_grad(set_to_none=True)
-    logits0 = model(x0)
-    loss0 = torch.nn.functional.cross_entropy(logits0, y0)
-    torch.autograd.backward((loss0,))
-    opt.step()
-
-    # Now measure k batches
-    times: list[float] = []
-    samples = 0
-    exceeded = False
-    peak_pct: float = 0.0
-    thr = float(get_memory_guard_config().threshold_percent)
-    n_batches = max(1, min(max(1, k), max(1, ds_len // max(1, batch_size_hint))))
-    start = _t.perf_counter()
-    for seen, (x, y) in enumerate(it, start=1):
-        t0 = _t.perf_counter()
-        x = x.to(device)
-        y = y.to(device)
+            _logging.getLogger("handwriting_ai").info("calibration_no_samples")
+            return 0.0, 0.0, 0.0, False
+        x0, y0 = first
+        x0 = x0.to(device)
+        y0 = y0.to(device)
         opt.zero_grad(set_to_none=True)
-        logits = model(x)
-        loss = torch.nn.functional.cross_entropy(logits, y)
-        torch.autograd.backward((loss,))
+        logits0 = model(x0)
+        loss0 = torch.nn.functional.cross_entropy(logits0, y0)
+        torch.autograd.backward((loss0,))
         opt.step()
-        dt_ms = (_t.perf_counter() - t0) * 1000.0
-        times.append(dt_ms)
-        samples += int(y.shape[0])
-        # Memory tracking: use configured guard threshold consistently
-        from handwriting_ai.monitoring import get_memory_snapshot
 
-        pct = float(get_memory_snapshot().cgroup_usage.percent)
-        if pct > peak_pct:
-            peak_pct = pct
-        if pct >= thr:
-            exceeded = True
-        if seen >= n_batches:
-            break
-    total_s = _t.perf_counter() - start
-    if len(times) >= 2:
-        pcts = quantiles(times, n=20)
-        p95 = pcts[18]
-    else:
-        p95 = times[0] if times else 0.0
-    if samples <= 0:
-        samples = int(batch_size_hint) * n_batches
-    sps = float(samples) / total_s if total_s > 0 else 0.0
-    return sps, p95, peak_pct, exceeded
+        # Now measure k batches
+        times: list[float] = []
+        samples = 0
+        exceeded = False
+        peak_pct: float = 0.0
+        thr = float(get_memory_guard_config().threshold_percent)
+        n_batches = max(1, min(max(1, k), max(1, ds_len // max(1, batch_size_hint))))
+        start = _t.perf_counter()
+        for seen, (x, y) in enumerate(it, start=1):
+            t0 = _t.perf_counter()
+            x = x.to(device)
+            y = y.to(device)
+            opt.zero_grad(set_to_none=True)
+            logits = model(x)
+            loss = torch.nn.functional.cross_entropy(logits, y)
+            torch.autograd.backward((loss,))
+            opt.step()
+            dt_ms = (_t.perf_counter() - t0) * 1000.0
+            times.append(dt_ms)
+            samples += int(y.shape[0])
+            # Memory tracking: use configured guard threshold consistently
+            from handwriting_ai.monitoring import get_memory_snapshot
+
+            pct = float(get_memory_snapshot().cgroup_usage.percent)
+            if pct > peak_pct:
+                peak_pct = pct
+            if pct >= thr:
+                exceeded = True
+            if seen >= n_batches:
+                break
+        total_s = _t.perf_counter() - start
+        if len(times) >= 2:
+            pcts = quantiles(times, n=20)
+            p95 = pcts[18]
+        else:
+            p95 = times[0] if times else 0.0
+        if samples <= 0:
+            samples = int(batch_size_hint) * n_batches
+        sps = float(samples) / total_s if total_s > 0 else 0.0
+        return sps, p95, peak_pct, exceeded
+    finally:
+        # Ensure allocations are collectible between attempts
+        del model
+        del opt
+        del _sch
+        _gc.collect()
 
 
 def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> CalibrationResult:
     """Measure a candidate using real training steps with binary search for safe batch size."""
-    import gc as _gc
     import logging as _logging
 
     torch.set_num_threads(int(cand.intra_threads))
