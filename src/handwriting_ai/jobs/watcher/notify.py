@@ -36,9 +36,12 @@ class NotificationWatcher:
         assert self.ports is not None
         cfg = self.ports.redis_config_get(self.redis_url, "notify-keyspace-events")
         v = cfg.get("notify-keyspace-events", "")
-        if "K" not in v or "z" not in v:
+        # Accept either keyspace (Kz) or keyevent (Ez) families. Require 'z' events.
+        has_keyspace = "K" in v and "z" in v
+        has_keyevent = "E" in v and "z" in v
+        if not (has_keyspace or has_keyevent):
             raise RuntimeError(
-                "Redis notify-keyspace-events must include 'Kz' for keyspace zset events"
+                "Redis notify-keyspace-events must include 'Kz' or 'Ez' for zset events"
             )
 
     def _patterns(self) -> list[str]:
@@ -51,13 +54,55 @@ class NotificationWatcher:
             pats.append(f"{prefix}:rq:registry:scheduled:*")
             pats.append(f"{prefix}:rq:registry:canceled:*")
             pats.append(f"{prefix}:rq:registry:started:*")
+            # Also subscribe to keyevent channel for zadd (queue filtering done in handler)
+            pats.append(self._keyevent_channel())
             return pats
         for q in self.queues:
             pats.append(f"{prefix}:rq:registry:failed:{q}")
             pats.append(f"{prefix}:rq:registry:scheduled:{q}")
             pats.append(f"{prefix}:rq:registry:canceled:{q}")
             pats.append(f"{prefix}:rq:registry:started:{q}")
+        # Always include keyevent channel; handler will filter queues
+        pats.append(self._keyevent_channel())
         return pats
+
+    def _keyevent_channel(self) -> str:
+        assert self.ports is not None
+        db = self.ports.redis_db_index(self.redis_url)
+        return f"__keyevent@{db}__:zadd"
+
+    def _queue_accepted(self, queue: str) -> bool:
+        if any(q == "*" for q in self.queues):
+            return True
+        return queue in self.queues
+
+    def _parse_keyspace(self, channel: str, data: str) -> tuple[str, str] | None:
+        # Channel format: __keyspace@<db>__:rq:registry:<reg>:<queue>
+        if data.lower() != "zadd":
+            return None
+        parts = channel.split(":")
+        # Expect [..., 'rq', 'registry', reg, queue]
+        if len(parts) < 5:
+            return None
+        if parts[-4] != "rq" or parts[-3] != "registry":
+            return None
+        reg = parts[-2]
+        queue = parts[-1]
+        return (reg, queue)
+
+    def _parse_keyevent(self, channel: str, data: str) -> tuple[str, str] | None:
+        # Channel format: __keyevent@<db>__:zadd
+        # Data is the key: rq:registry:<reg>:<queue>
+        if not channel.endswith(":zadd"):
+            return None
+        parts = data.split(":")
+        if len(parts) < 4:
+            return None
+        if parts[0] != "rq" or parts[1] != "registry":
+            return None
+        reg = parts[2]
+        queue = parts[3]
+        return (reg, queue)
 
     def _handle_failed(self, queue: str) -> None:
         assert self.ports is not None
@@ -85,7 +130,7 @@ class NotificationWatcher:
             message = p.summarize_exc_info(exc)
             if not isinstance(exc, str) or message == "job failed":
                 hint = p.detect_failed_reason(conn, jid)
-                if hint:
+                if hint:  # pragma: no branch - simple truthy check
                     message = p.summarize_exc_info(hint)
             evt = ev.failed(
                 ev.Context(
@@ -94,7 +139,7 @@ class NotificationWatcher:
                 error_kind="system",
                 message=message,
             )
-            self._publish_and_mark(evt, key)
+            self._publish_and_mark(evt, key, reg="failed", queue=queue)
 
     def _handle_canceled(self, queue: str) -> None:
         assert self.ports is not None
@@ -125,14 +170,17 @@ class NotificationWatcher:
                 error_kind="user",
                 message="Job canceled",
             )
-            self._publish_and_mark(evt, key)
+            self._publish_and_mark(evt, key, reg="canceled", queue=queue)
 
-    def _publish_and_mark(self, evt: ev.EventV1, jid: str) -> None:
-        if self.store is None:
+    def _publish_and_mark(self, evt: ev.EventV1, jid: str, *, reg: str, queue: str) -> None:
+        if self.store is None:  # pragma: no cover - store always set in production
             return
         pub = self.publisher
         try:
-            if pub is not None:
+            if pub is not None:  # pragma: no branch - publish side-effect
+                logging.getLogger("handwriting_ai").info(
+                    "notify_publish registry=%s queue=%s", reg, queue
+                )
                 pub.publish(self.events_channel, ev.encode_event(evt))
         finally:
             self.store.mark(jid)
@@ -160,20 +208,32 @@ class NotificationWatcher:
                 ps.close()
 
     def _handle_message(self, msg: dict[str, object]) -> None:
-        """Handle a single PubSub message (pmessage)."""
-        ch = msg.get("channel")
-        data = str(msg.get("data") or "")
-        if not isinstance(ch, str):
+        """Handle a single PubSub message (pmessage) from keyspace or keyevent."""
+        ch_obj = msg.get("channel")
+        data_obj = msg.get("data")
+        ch = ch_obj if isinstance(ch_obj, str) else None
+        data = str(data_obj) if data_obj is not None else ""
+        if ch is None:
             return
-        # Channel format: __keyspace@<db>__:rq:registry:<name>:<queue>
-        parts = ch.split(":")
-        if len(parts) < 5:
+
+        # Try keyspace parse first
+        parsed = self._parse_keyspace(ch, data)
+        if parsed is not None:
+            source = "keyspace"
+        else:
+            # Try keyevent form
+            parsed = self._parse_keyevent(ch, data)
+            if parsed is None:
+                return
+            source = "keyevent"
+
+        reg, queue = parsed
+        if not self._queue_accepted(queue):
             return
-        reg = parts[-2]
-        queue = parts[-1]
-        # Only act on zadd events (member inserted)
-        if data.lower() != "zadd":
-            return
+
+        logging.getLogger("handwriting_ai").info(
+            "notify_event registry=%s queue=%s source=%s", reg, queue, source
+        )
         if reg == "failed":
             self._handle_failed(queue)
         elif reg == "canceled":
