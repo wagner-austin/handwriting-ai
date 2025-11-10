@@ -474,8 +474,13 @@ def _register_admin(
             if model_id == s.digits.active_model:
                 try:
                     engine.try_load_active()
-                except (RuntimeError, ValueError, OSError, TypeError):
-                    logging.getLogger("handwriting_ai").info("admin_reload_failed")
+                except (RuntimeError, ValueError, OSError, TypeError) as exc:
+                    logging.getLogger("handwriting_ai").error(
+                        "admin_reload_failed error_type=%s error=%s",
+                        type(exc).__name__,
+                        str(exc),
+                    )
+                    raise
         else:
             # Basic transport-level check: avoid persisting empty artifacts
             if written_size <= 0:
