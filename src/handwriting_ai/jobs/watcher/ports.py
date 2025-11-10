@@ -13,6 +13,9 @@ if TYPE_CHECKING:  # typing-only forward references without import-time deps
         RedisDebugClientProto as _RedisDebugClientProto,
     )
     from .adapters import (
+        RedisPubSubProto as _RedisPubSubProto,
+    )
+    from .adapters import (
         RQJobProto as _RQJobProto,
     )
     from .adapters import (
@@ -25,6 +28,33 @@ if TYPE_CHECKING:  # typing-only forward references without import-time deps
 
 class RedisFactory(Protocol):  # pragma: no cover - typing only
     def __call__(self, url: str, *, decode_responses: bool = False) -> _RedisClient: ...
+
+
+# Defaults for notification helpers to keep existing tests simple
+def _noop_pubsub(_: str) -> _RedisPubSubProto:  # pragma: no cover - tests that don't use notify
+    class _P:
+        def psubscribe(self, *patterns: str) -> None:
+            return None
+
+        def get_message(
+            self,
+            ignore_subscribe_messages: bool = True,
+            timeout: float | None = None,
+        ) -> dict[str, object] | None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    return _P()
+
+
+def _noop_cfg(_: str, __: str) -> dict[str, str]:  # pragma: no cover
+    return {}
+
+
+def _noop_db(_: str) -> int:  # pragma: no cover
+    return 0
 
 
 @dataclass(frozen=True)
@@ -44,6 +74,10 @@ class WatcherPorts:
     detect_failed_reason: Callable[[object, str], str | None]
     summarize_exc_info: Callable[[object], str]
     make_logger: Callable[[], Logger]
+    # Redis keyspace notification helpers (defaults for tests that don't use them)
+    redis_pubsub: Callable[[str], _RedisPubSubProto] = _noop_pubsub
+    redis_config_get: Callable[[str, str], dict[str, str]] = _noop_cfg
+    redis_db_index: Callable[[str], int] = _noop_db
 
 
 def make_default_ports() -> WatcherPorts:
@@ -62,4 +96,7 @@ def make_default_ports() -> WatcherPorts:
         detect_failed_reason=logic.detect_failed_reason,
         summarize_exc_info=logic.summarize_exc_info,
         make_logger=logic.make_logger,
+        redis_pubsub=adapters.redis_pubsub,
+        redis_config_get=adapters.redis_config_get,
+        redis_db_index=adapters.redis_db_index,
     )

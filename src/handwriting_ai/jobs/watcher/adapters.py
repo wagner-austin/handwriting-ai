@@ -34,6 +34,17 @@ if TYPE_CHECKING:
     def rq_canceled_registry(queue: RQQueueProto) -> RQRegistryProto: ...
     def rq_fetch_job(conn: RedisDebugClientProto, job_id: str) -> RQJobProto: ...
 
+    class RedisPubSubProto(Protocol):  # pragma: no cover - typing only
+        def psubscribe(self, *patterns: str) -> None: ...
+        def get_message(
+            self, ignore_subscribe_messages: bool = True, timeout: float | None = None
+        ) -> dict[str, object] | None: ...
+        def close(self) -> None: ...
+
+    def redis_pubsub(url: str) -> RedisPubSubProto: ...
+    def redis_config_get(url: str, param: str) -> dict[str, str]: ...
+    def redis_db_index(url: str) -> int: ...
+
 else:  # pragma: no cover - runtime only
     import logging
 
@@ -85,3 +96,35 @@ else:  # pragma: no cover - runtime only
         import rq
 
         return rq.job.Job.fetch(job_id, connection=conn)
+
+    # --- Redis pubsub + config helpers for notification watcher ---
+    def redis_pubsub(url: str) -> RedisPubSubProto:
+        import redis
+
+        client = redis.Redis.from_url(url, decode_responses=True)
+        return client.pubsub()
+
+    def redis_config_get(url: str, param: str) -> dict[str, str]:
+        import redis
+
+        client = redis.Redis.from_url(url, decode_responses=True)
+        try:
+            out = client.config_get(param)
+            if not isinstance(out, dict):
+                return {}
+            # Cast keys/values to str
+            return {str(k): str(v) for k, v in out.items()}
+        finally:
+            from contextlib import suppress
+
+            with suppress(Exception):  # pragma: no cover - best effort
+                client.close()
+
+    def redis_db_index(url: str) -> int:
+        # Parse db index from URL; default 0
+        from urllib.parse import urlparse
+
+        parsed = urlparse(url)
+        if parsed.path and parsed.path.strip("/").isdigit():
+            return int(parsed.path.strip("/"))
+        return 0
