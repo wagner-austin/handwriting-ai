@@ -142,8 +142,8 @@ def test_patterns_multi_queue() -> None:
         ports=_ports_stub(failed=[], started=[], canceled=[], db=2),
     )
     pats = w._patterns()
-    assert "__keyspace@2__:rq:registry:failed:a" in pats
-    assert "__keyspace@2__:rq:registry:started:b" in pats
+    assert "__keyspace@2__:rq:failed:a" in pats
+    assert "__keyspace@2__:rq:started:b" in pats
     assert "__keyevent@2__:zadd" in pats
 
 
@@ -155,8 +155,8 @@ def test_patterns_wildcard_all_queues() -> None:
         ports=_ports_stub(failed=[], started=[], canceled=[], db=5),
     )
     pats = w._patterns()
-    assert "__keyspace@5__:rq:registry:failed:*" in pats
-    assert "__keyspace@5__:rq:registry:started:*" in pats
+    assert "__keyspace@5__:rq:failed:*" in pats
+    assert "__keyspace@5__:rq:started:*" in pats
     assert "__keyevent@5__:zadd" in pats
 
 
@@ -173,8 +173,8 @@ def test_handle_message_non_zadd_ignored() -> None:
     )
     msg: dict[str, object] = {
         "type": "pmessage",
-        "pattern": "__keyspace@0__:rq:registry:failed:digits",
-        "channel": "__keyspace@0__:rq:registry:failed:digits",
+        "pattern": "__keyspace@0__:rq:failed:digits",
+        "channel": "__keyspace@0__:rq:failed:digits",
         "data": "zrem",
     }
     w._handle_message(msg)
@@ -210,8 +210,8 @@ def test_canceled_event_path_marks_and_publishes() -> None:
     )
     msg: dict[str, object] = {
         "type": "pmessage",
-        "pattern": "__keyspace@0__:rq:registry:canceled:digits",
-        "channel": "__keyspace@0__:rq:registry:canceled:digits",
+        "pattern": "__keyspace@0__:rq:canceled:digits",
+        "channel": "__keyspace@0__:rq:canceled:digits",
         "data": "zadd",
     }
     w._handle_message(msg)
@@ -234,7 +234,7 @@ def test_keyevent_failed_path_marks_and_publishes() -> None:
         "type": "pmessage",
         "pattern": "__keyevent@0__:zadd",
         "channel": "__keyevent@0__:zadd",
-        "data": "rq:registry:failed:digits",
+        "data": "rq:failed:digits",
     }
     w._handle_message(msg)
     assert "digits:jid-5" in st.seen_ids and len(pub.items) == 1
@@ -255,7 +255,7 @@ def test_keyevent_queue_filtering_explicit() -> None:
         "type": "pmessage",
         "pattern": "__keyevent@0__:zadd",
         "channel": "__keyevent@0__:zadd",
-        "data": "rq:registry:failed:other",
+        "data": "rq:failed:other",
     }
     w._handle_message(msg)
     assert st.seen_ids == set() and pub.items == []
@@ -276,7 +276,7 @@ def test_keyevent_wildcard_accepts_any_queue() -> None:
         "type": "pmessage",
         "pattern": "__keyevent@0__:zadd",
         "channel": "__keyevent@0__:zadd",
-        "data": "rq:registry:failed:anyqueue",
+        "data": "rq:failed:anyqueue",
     }
     w._handle_message(msg)
     assert any(it[0] == "digits:events" for it in pub.items)
@@ -408,16 +408,16 @@ def test_failed_and_canceled_seen_skips_publish() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:registry:failed:digits",
-            "channel": "__keyspace@0__:rq:registry:failed:digits",
+            "pattern": "__keyspace@0__:rq:failed:digits",
+            "channel": "__keyspace@0__:rq:failed:digits",
             "data": "zadd",
         }
     )
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:registry:canceled:digits",
-            "channel": "__keyspace@0__:rq:registry:canceled:digits",
+            "pattern": "__keyspace@0__:rq:canceled:digits",
+            "channel": "__keyspace@0__:rq:canceled:digits",
             "data": "zadd",
         }
     )
@@ -470,8 +470,8 @@ def test_failed_message_uses_detect_failed_reason_hint() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:registry:failed:digits",
-            "channel": "__keyspace@0__:rq:registry:failed:digits",
+            "pattern": "__keyspace@0__:rq:failed:digits",
+            "channel": "__keyspace@0__:rq:failed:digits",
             "data": "zadd",
         }
     )
@@ -494,8 +494,8 @@ def test_scheduled_event_noop() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:registry:scheduled:digits",
-            "channel": "__keyspace@0__:rq:registry:scheduled:digits",
+            "pattern": "__keyspace@0__:rq:scheduled:digits",
+            "channel": "__keyspace@0__:rq:scheduled:digits",
             "data": "zadd",
         }
     )
