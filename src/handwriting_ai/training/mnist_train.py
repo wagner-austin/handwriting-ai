@@ -104,12 +104,9 @@ def _run_training_loop(
 
 
 def _configure_interop_threads(interp_threads: int | None) -> None:
-    # Best-effort; environment may have already started parallel work
+    # Helper must propagate RuntimeError for tests that validate raising
     if hasattr(torch, "set_num_interop_threads") and interp_threads is not None:
-        try:
-            torch.set_num_interop_threads(int(interp_threads))
-        except RuntimeError as exc:
-            logging.getLogger("handwriting_ai").info("set_num_interop_threads_failed msg=%s", exc)
+        torch.set_num_interop_threads(int(interp_threads))
 
 
 def make_loaders(
@@ -165,9 +162,17 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     device = torch.device(cfg.device)
     # Compute initial effective configuration
     ec, limits = build_effective_config(cfg)
+
     # Set interop threads once before any parallel work.
     # Calibration varies only intra/loader/batch; interop remains fixed.
-    _configure_interop_threads(ec.interop_threads)
+    # Apply interop threads; training continues even if setting fails
+    def run_forever() -> None:
+        try:
+            _configure_interop_threads(ec.interop_threads)
+        except RuntimeError as exc:
+            logging.getLogger("handwriting_ai").error("set_num_interop_threads_failed msg=%s", exc)
+
+    run_forever()
     # Always run empirical preflight calibration to avoid heuristic drift.
     cache_path = Path("artifacts") / "calibration.json"
     ttl_s = 7 * 24 * 60 * 60
@@ -217,14 +222,19 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
             model = _build_model()
             log.info("model_built_starting_training")
             opt, sch = _build_optimizer_and_scheduler(model, cfg)
+            best_sd: dict[str, Tensor] | None = None
+            best_val: float = -1.0
             try:
                 best_sd, best_val = _run_training_loop(
                     model, train_loader, test_loader, device, cfg, opt, sch
                 )
-            except KeyboardInterrupt:
-                logging.getLogger("handwriting_ai").info("training_interrupted_by_user")
-                best_val = -1.0
-                best_sd = None
+            except KeyboardInterrupt as exc:
+                logging.getLogger("handwriting_ai").error(
+                    "training_interrupted_by_user error=%s", exc
+                )
+                # Gracefully handle interrupt: save current progress instead of losing work
+                best_sd = model.state_dict()
+                best_val = _evaluate(model, test_loader, device)
 
         log.info("threadpoolctl_applied")
 
