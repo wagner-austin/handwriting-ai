@@ -61,3 +61,12 @@ def build_effective_config(cfg: _TrainCfgProto) -> tuple[EffectiveConfig, Resour
 def apply_threads(ec: EffectiveConfig) -> None:
     # Apply intra-op threads post-calibration; interop is set once before any parallel work
     torch.set_num_threads(int(ec.intra_threads))
+
+
+__all__ = [
+    "EffectiveConfig",
+    "build_effective_config",
+    "apply_threads",
+    "detect_resource_limits",
+    "ResourceLimits",
+]
