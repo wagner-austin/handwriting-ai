@@ -9,11 +9,11 @@ from handwriting_ai.config import (
 )
 
 
-def test_env_retention_invalid_is_ignored(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_env_retention_invalid_raises_after_logging(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DIGITS__RETENTION_KEEP_RUNS", "not-an-int")
     d0 = DigitsConfig()
-    d1 = _apply_digits_retention_from_env(d0)
-    assert d1.retention_keep_runs == d0.retention_keep_runs
+    with pytest.raises(ValueError, match="invalid literal"):
+        _apply_digits_retention_from_env(d0)
 
 
 def test_merge_digits_retention_from_toml() -> None:
