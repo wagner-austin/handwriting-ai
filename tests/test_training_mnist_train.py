@@ -4,6 +4,7 @@ from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 import torch
 from PIL import Image
 from torch import Tensor
@@ -24,6 +25,14 @@ from handwriting_ai.training.mnist_train import (
     make_loaders,
     train_with_config,
 )
+
+
+@pytest.fixture(autouse=True)
+def _mock_monitoring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock monitoring functions that fail on non-container systems."""
+    import handwriting_ai.training.mnist_train as mt
+
+    monkeypatch.setattr(mt, "log_system_info", lambda: None, raising=False)
 
 
 class _TinyBase(Dataset[tuple[Image.Image, int]]):
@@ -191,7 +200,7 @@ def test_train_calls_evaluate_in_epoch(tmp_path: Path) -> None:
     assert called["n"] >= 1
 
 
-def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
+def test_train_interrupt_saves_artifact(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Patch _train_epoch to raise KeyboardInterrupt and ensure artifacts still write
     cfg = _cfg(tmp_path)
     cfg = replace(cfg, out_dir=tmp_path / "out_interrupt", epochs=2)
@@ -209,7 +218,8 @@ def test_train_interrupt_saves_artifact(tmp_path: Path) -> None:
     ) -> float:
         raise KeyboardInterrupt
 
-    mt._train_epoch = _boom  # patch
+    # Patch with automatic restoration to avoid cross-test leakage
+    monkeypatch.setattr(mt, "_train_epoch", _boom, raising=True)
     out_dir = train_with_config(cfg, (train_base, test_base))
     # Even when interrupted, we should still write current/best weights and manifest
     assert (out_dir / "model.pt").exists()
