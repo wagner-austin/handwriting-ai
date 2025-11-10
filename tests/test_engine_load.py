@@ -34,7 +34,7 @@ def test_try_load_active_manifest_and_state_load_failures() -> None:
         eng.try_load_active()
         assert eng.ready is False
 
-        # 2) Manifest parse failure → manifest_load_failed
+        # 2) Manifest parse failure → raises after logging
         (active_dir / "manifest.json").write_text("not json", encoding="utf-8")
         (active_dir / "model.pt").write_bytes(b"\x00\x01bad")
         buf = io.StringIO()
@@ -43,13 +43,18 @@ def test_try_load_active_manifest_and_state_load_failures() -> None:
         handler.setFormatter(_JsonFormatter())
         logger.addHandler(handler)
         try:
-            eng.try_load_active()
+            import pickle
+
+            import pytest
+
+            with pytest.raises((OSError, ValueError, RuntimeError, pickle.UnpicklingError)):
+                eng.try_load_active()
         finally:
             logger.removeHandler(handler)
         out = buf.getvalue()
         assert "manifest_load_failed" in out
 
-        # 3) State dict load failure → state_dict_load_failed
+        # 3) State dict load failure → raises after logging
         good_manifest = {
             "schema_version": "v1.1",
             "model_id": active,
@@ -68,13 +73,20 @@ def test_try_load_active_manifest_and_state_load_failures() -> None:
         handler2.setFormatter(_JsonFormatter())
         logger.addHandler(handler2)
         try:
-            eng.try_load_active()
+            import pickle
+
+            import pytest
+
+            with pytest.raises((OSError, ValueError, RuntimeError, pickle.UnpicklingError)):
+                eng.try_load_active()
         finally:
             logger.removeHandler(handler2)
         assert "state_dict_load_failed" in buf2.getvalue()
 
 
-def test_invalid_state_dict_variants_logged_and_not_ready() -> None:
+def test_invalid_state_dict_variants_logged_and_raise() -> None:
+    import pytest
+
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         model_dir = root / "models"
@@ -136,7 +148,8 @@ def test_invalid_state_dict_variants_logged_and_not_ready() -> None:
             h.setFormatter(_JsonFormatter())
             logger.addHandler(h)
             try:
-                eng.try_load_active()
+                with pytest.raises(ValueError):
+                    eng.try_load_active()
             finally:
                 logger.removeHandler(h)
             assert eng.ready is False
