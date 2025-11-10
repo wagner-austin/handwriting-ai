@@ -7,6 +7,22 @@ import pytest
 
 import handwriting_ai.jobs.digits as dj
 from handwriting_ai.training.mnist_train import TrainConfig
+from handwriting_ai.training.resources import ResourceLimits
+
+
+@pytest.fixture(autouse=True)
+def _mock_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock resource detection for Windows/non-container environments."""
+    limits = ResourceLimits(
+        cpu_cores=4,
+        memory_bytes=4 * 1024 * 1024 * 1024,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=64,
+    )
+    import handwriting_ai.training.runtime as rt
+
+    monkeypatch.setattr(rt, "detect_resource_limits", lambda: limits, raising=False)
 
 
 class _Pub:
