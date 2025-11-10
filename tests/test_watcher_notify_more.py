@@ -145,6 +145,18 @@ def test_patterns_multi_queue() -> None:
     assert "__keyspace@2__:rq:registry:started:b" in pats
 
 
+def test_patterns_wildcard_all_queues() -> None:
+    w = NotificationWatcher(
+        redis_url="redis://localhost/5",
+        queues=("*",),
+        events_channel="digits:events",
+        ports=_ports_stub(failed=[], started=[], canceled=[], db=5),
+    )
+    pats = w._patterns()
+    assert "__keyspace@5__:rq:registry:failed:*" in pats
+    assert "__keyspace@5__:rq:registry:started:*" in pats
+
+
 def test_handle_message_non_zadd_ignored() -> None:
     pub = _Pub()
     st = _Store()
