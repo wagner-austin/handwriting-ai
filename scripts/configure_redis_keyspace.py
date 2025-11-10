@@ -46,20 +46,21 @@ def configure_keyspace_notifications(redis_url: str) -> None:
         current_value = current_config.get("notify-keyspace-events", "")
         print(f"Current notify-keyspace-events: '{current_value}'")
 
-        # Set keyspace notifications
-        target_value = "Kz"
-        if current_value == target_value:
-            print(f"Already configured with '{target_value}'")
+        # Check if keyspace notifications already enabled (order doesn't matter)
+        if "K" in current_value and "z" in current_value:
+            print(f"Already configured with '{current_value}' (contains both K and z)")
         else:
+            # Set keyspace notifications
+            target_value = "Kz"
             client.config_set("notify-keyspace-events", target_value)
             print(f"Set notify-keyspace-events to '{target_value}'")
 
-            # Verify it was set
+            # Verify it was set (check contains K and z, not exact match)
             verify_config = client.config_get("notify-keyspace-events")
             verify_value = verify_config.get("notify-keyspace-events", "")
-            if verify_value != target_value:
+            if "K" not in verify_value or "z" not in verify_value:
                 raise RuntimeError(
-                    f"Config verification failed: expected '{target_value}', got '{verify_value}'"
+                    f"Config verification failed: expected K and z, got '{verify_value}'"
                 )
             print(f"Verified configuration: '{verify_value}'")
 
