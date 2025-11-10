@@ -408,16 +408,16 @@ def test_failed_and_canceled_seen_skips_publish() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:failed:digits",
-            "channel": "__keyspace@0__:rq:failed:digits",
+            "pattern": "__keyspace@0__:rq:registry:failed:digits",
+            "channel": "__keyspace@0__:rq:registry:failed:digits",
             "data": "zadd",
         }
     )
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:canceled:digits",
-            "channel": "__keyspace@0__:rq:canceled:digits",
+            "pattern": "__keyspace@0__:rq:registry:canceled:digits",
+            "channel": "__keyspace@0__:rq:registry:canceled:digits",
             "data": "zadd",
         }
     )
@@ -470,8 +470,8 @@ def test_failed_message_uses_detect_failed_reason_hint() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:failed:digits",
-            "channel": "__keyspace@0__:rq:failed:digits",
+            "pattern": "__keyspace@0__:rq:registry:failed:digits",
+            "channel": "__keyspace@0__:rq:registry:failed:digits",
             "data": "zadd",
         }
     )
@@ -494,8 +494,8 @@ def test_scheduled_event_noop() -> None:
     w._handle_message(
         {
             "type": "pmessage",
-            "pattern": "__keyspace@0__:rq:scheduled:digits",
-            "channel": "__keyspace@0__:rq:scheduled:digits",
+            "pattern": "__keyspace@0__:rq:registry:scheduled:digits",
+            "channel": "__keyspace@0__:rq:registry:scheduled:digits",
             "data": "zadd",
         }
     )

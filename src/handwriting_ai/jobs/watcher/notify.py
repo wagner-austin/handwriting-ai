@@ -52,13 +52,13 @@ class NotificationWatcher:
         regs = ("failed", "scheduled", "canceled", "started")
         if any(q == "*" for q in self.queues):
             for reg in regs:
-                pats.append(f"{prefix}:rq:{reg}:*")
+                pats.append(f"{prefix}:rq:registry:{reg}:*")
             # Also subscribe to keyevent channel for zadd (queue filtering done in handler)
             pats.append(self._keyevent_channel())
             return pats
         for q in self.queues:
             for reg in regs:
-                pats.append(f"{prefix}:rq:{reg}:{q}")
+                pats.append(f"{prefix}:rq:registry:{reg}:{q}")
         # Always include keyevent channel; handler will filter queues
         pats.append(self._keyevent_channel())
         return pats
@@ -74,14 +74,14 @@ class NotificationWatcher:
         return queue in self.queues
 
     def _parse_keyspace(self, channel: str, data: str) -> tuple[str, str] | None:
-        # Channel format: __keyspace@<db>__:rq:<reg>:<queue>
+        # Channel format: __keyspace@<db>__:rq:registry:<reg>:<queue>
         if data.lower() != "zadd":
             return None
         parts = channel.split(":")
-        # Expect [..., 'rq', reg, queue]
-        if len(parts) < 4:
+        # Expect [..., 'rq', 'registry', reg, queue]
+        if len(parts) < 5:
             return None
-        if parts[-3] != "rq":
+        if parts[-4] != "rq" or parts[-3] != "registry":
             return None
         reg = parts[-2]
         queue = parts[-1]
@@ -89,16 +89,16 @@ class NotificationWatcher:
 
     def _parse_keyevent(self, channel: str, data: str) -> tuple[str, str] | None:
         # Channel format: __keyevent@<db>__:zadd
-        # Data is the key: rq:<reg>:<queue>
+        # Data is the key: rq:registry:<reg>:<queue>
         if not channel.endswith(":zadd"):
             return None
         parts = data.split(":")
-        if len(parts) < 3:
+        if len(parts) < 4:
             return None
-        if parts[0] != "rq":
+        if parts[0] != "rq" or parts[1] != "registry":
             return None
-        reg = parts[1]
-        queue = parts[2]
+        reg = parts[2]
+        queue = parts[3]
         return (reg, queue)
 
     def _handle_failed(self, queue: str) -> None:
