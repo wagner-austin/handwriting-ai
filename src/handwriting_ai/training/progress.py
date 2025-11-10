@@ -27,8 +27,9 @@ def emit_progress(epoch: int, total_epochs: int, val_acc: float | None) -> None:
         return
     try:
         em.emit(epoch=epoch, total_epochs=total_epochs, val_acc=val_acc)
-    except (RuntimeError, ValueError, TypeError):
-        logging.getLogger("handwriting_ai").debug("progress_emitter_failed")
+    except (RuntimeError, ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error("progress_emitter_failed error=%s", exc)
+        raise
 
 
 class BatchProgressEmitter(Protocol):
@@ -71,8 +72,9 @@ def emit_batch(metrics: BatchMetrics) -> None:
         return
     try:
         em.emit_batch(metrics)
-    except (RuntimeError, ValueError, TypeError):
-        logging.getLogger("handwriting_ai").debug("progress_batch_emitter_failed")
+    except (RuntimeError, ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error("progress_batch_emitter_failed error=%s", exc)
+        raise
 
 
 class BestEmitter(Protocol):
@@ -90,8 +92,9 @@ def emit_best(*, epoch: int, val_acc: float) -> None:
         return
     try:
         em.emit_best(epoch=epoch, val_acc=val_acc)
-    except (RuntimeError, ValueError, TypeError):
-        logging.getLogger("handwriting_ai").debug("progress_best_emitter_failed")
+    except (RuntimeError, ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error("progress_best_emitter_failed error=%s", exc)
+        raise
 
 
 class EpochEmitter(Protocol):
@@ -128,5 +131,6 @@ def emit_epoch(
             val_acc=val_acc,
             time_s=time_s,
         )
-    except (RuntimeError, ValueError, TypeError):
-        logging.getLogger("handwriting_ai").debug("progress_epoch_emitter_failed")
+    except (RuntimeError, ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error("progress_epoch_emitter_failed error=%s", exc)
+        raise
