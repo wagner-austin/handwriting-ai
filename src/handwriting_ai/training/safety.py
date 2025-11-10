@@ -15,8 +15,49 @@ class MemoryGuardConfig:
     required_consecutive: int
 
 
+def compute_memory_guard_config(memory_bytes: int | None) -> MemoryGuardConfig:
+    """
+    Compute memory guard settings based on available memory.
+
+    Threshold tiers rationale:
+    - < 1GB: 80% threshold - Critical: OOM killer aggressive, minimal headroom
+    - 1-2GB: 85% threshold - Conservative: Limited buffer for optimizer state
+    - 2-4GB: 88% threshold - Standard: Reasonable buffer for training overhead
+    - >=4GB: 92% threshold - Relaxed: Ample headroom
+
+    Calibration measures data loading only. Training adds ~30-50% overhead:
+    - Model gradients (100% of params)
+    - Optimizer state (Adam: 200% of params for momentum + variance)
+    - Loss buffers, intermediate activations
+
+    Lower thresholds for smaller containers provide safety margin.
+
+    Args:
+        memory_bytes: Available memory in bytes, or None if unlimited
+
+    Returns:
+        MemoryGuardConfig with computed threshold and required_consecutive=3
+    """
+    if memory_bytes is None:
+        # No cgroup limit detected - use conservative default
+        return MemoryGuardConfig(enabled=True, threshold_percent=88.0, required_consecutive=3)
+
+    gb = float(memory_bytes) / (1024.0 * 1024.0 * 1024.0)
+
+    if gb < 1.0:
+        threshold = 80.0
+    elif gb < 2.0:
+        threshold = 85.0
+    elif gb < 4.0:
+        threshold = 88.0
+    else:
+        threshold = 92.0
+
+    return MemoryGuardConfig(enabled=True, threshold_percent=threshold, required_consecutive=3)
+
+
 _cfg: MemoryGuardConfig = MemoryGuardConfig(
-    enabled=False, threshold_percent=92.0, required_consecutive=3
+    enabled=False, threshold_percent=0.0, required_consecutive=0
 )
 _consecutive: int = 0
 _last_warning_pct: float = 0.0
@@ -98,6 +139,7 @@ def on_batch_check() -> bool:
 
 __all__ = [
     "MemoryGuardConfig",
+    "compute_memory_guard_config",
     "set_memory_guard_config",
     "reset_memory_guard",
     "on_batch_check",
