@@ -32,7 +32,7 @@ serve: install-dev
 	poetry run uvicorn handwriting_ai.api.app:app --host 0.0.0.0 --port $(PORT)
 
 test: install-dev
-	poetry run pytest --cov=src --cov-report=term-missing
+	poetry run pytest --cov=src --cov-report=term-missing -v
 
 lint: install-dev
 	poetry run ruff check . --fix
