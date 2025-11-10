@@ -194,6 +194,7 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
 
     while bs_lo <= bs_hi:
         mid = (bs_lo + bs_hi) // 2
+        loader: DataLoader[tuple[torch.Tensor, torch.Tensor]] | None = None
         try:
             cfg_try = DataLoaderConfig(
                 batch_size=mid,
@@ -225,6 +226,9 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
             )
             raise
         finally:
+            # Explicit DataLoader cleanup before gc to release worker processes and buffers
+            if loader is not None:
+                del loader
             _gc.collect()
 
     return CalibrationResult(

@@ -60,7 +60,8 @@ class NotificationWatcher:
         q = p.rq_queue(conn, queue)
         ids = p.coerce_job_ids(p.rq_failed_registry(q).get_job_ids())
         for jid in ids[:50]:  # bounded page
-            if self.store is not None and self.store.seen(jid):
+            key = f"{queue}:{jid}"
+            if self.store is not None and self.store.seen(key):
                 continue
             try:
                 job = p.rq_fetch_job(conn, jid)
@@ -87,7 +88,7 @@ class NotificationWatcher:
                 error_kind="system",
                 message=message,
             )
-            self._publish_and_mark(evt, jid)
+            self._publish_and_mark(evt, key)
 
     def _handle_canceled(self, queue: str) -> None:
         assert self.ports is not None
@@ -96,7 +97,8 @@ class NotificationWatcher:
         q = p.rq_queue(conn, queue)
         ids = p.coerce_job_ids(p.rq_canceled_registry(q).get_job_ids())
         for jid in ids[:50]:
-            if self.store is not None and self.store.seen(jid):
+            key = f"{queue}:{jid}"
+            if self.store is not None and self.store.seen(key):
                 continue
             try:
                 job = p.rq_fetch_job(conn, jid)
@@ -117,7 +119,7 @@ class NotificationWatcher:
                 error_kind="user",
                 message="Job canceled",
             )
-            self._publish_and_mark(evt, jid)
+            self._publish_and_mark(evt, key)
 
     def _publish_and_mark(self, evt: ev.EventV1, jid: str) -> None:
         if self.store is None:

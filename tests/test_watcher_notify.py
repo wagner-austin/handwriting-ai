@@ -122,4 +122,4 @@ def test_notify_watcher_handles_failed_event() -> None:
         "data": "zadd",
     }
     w._handle_message(msg)
-    assert "jid-1" in st.seen_ids and len(pub.items) == 1
+    assert "digits:jid-1" in st.seen_ids and len(pub.items) == 1

@@ -1,17 +1,19 @@
-# Redis Keyspace Notifications vs Polling — Audit and Migration Plan (No Fallback)
+# Redis Keyspace Notifications — Completed Migration (No Fallback)
 
-This document audits the current codebase and specifies a complete migration from polling to Redis keyspace notifications for RQ registries. The migration is strict: no fallbacks, no back-compat toggles, and removal of legacy polling code. All changes must preserve our strict typing (no Any/casts/ignores), DRY structure, and 100% statement/branch coverage under `make check`.
+This document confirms our completed migration from polling to Redis keyspace notifications for RQ registries. The design is strict: no fallbacks, no back-compat toggles, and legacy polling code removed. All changes preserve our strict typing (no Any/casts/ignores), DRY structure, and 100% statement/branch coverage under `make check`.
 
-## Repository Audit (Current State)
+## Repository State
 
-- Polling watcher: `src/handwriting_ai/jobs/watcher/watcher.py:21` implements `FailureWatcher` which scans RQ registries every `poll_interval_s` seconds and publishes typed failure events. It is wired via `scripts/rq_failure_watcher.py:1` and `src/handwriting_ai/jobs/watcher/runner.py:1`.
+- Event-driven watcher: `src/handwriting_ai/jobs/watcher/notify.py` implements `NotificationWatcher`, subscribing to Redis keyspace notifications for RQ registries.
 - Integration boundaries are abstracted through `WatcherPorts` for redis/rq access: `src/handwriting_ai/jobs/watcher/ports.py:1` and `src/handwriting_ai/jobs/watcher/adapters.py:1`.
 - Failure heuristics and payload extraction are typed helpers: `src/handwriting_ai/jobs/watcher/logic.py:1`.
 - Publisher and dedupe store are small, typed components: `src/handwriting_ai/jobs/watcher/publisher.py:1`, `src/handwriting_ai/jobs/watcher/store.py:1`.
-- There is no event‑driven watcher in the repo today. A demo exists for Upstash keyspace notifications: `scripts/test_keyspace_notifications.py:1`.
-- Tests thoroughly cover polling behavior: `tests/test_failure_watcher.py:1` and companions; CI gates enforce strict typing and coverage via `make check` (ruff + mypy strict + pytest coverage).
+- Entry point: `scripts/rq_keyspace_watcher.py` invokes `run_notify_from_env()`.
+- Runner: `src/handwriting_ai/jobs/watcher/runner.py` exposes only `run_notify_from_env()`.
+- Integration boundaries remain abstracted through `WatcherPorts` and `adapters`, with added pubsub/config helpers.
+- Typed helpers retained: `logic.py` (payload extraction, reason detection), `publisher.py`, `store.py`.
 
-Conclusion: We currently poll. We will replace polling with an event-driven watcher, then remove polling code and its tests.
+Conclusion: We run event-driven only; polling code and tests have been removed.
 
 ## Why Keyspace Notifications
 
@@ -20,7 +22,7 @@ Conclusion: We currently poll. We will replace polling with an event-driven watc
 
 ## Target Design (Event-Driven Only)
 
-New synchronous watcher consumes keyspace notifications for the three RQ registries: `failed`, `started`, and `canceled` for the `queue_name`.
+Synchronous watcher consumes keyspace notifications for the RQ registries: `failed`, `scheduled` (optional), `started`, and `canceled` for configured queues.
 
 Subscription patterns (db 0):
 - `__keyspace@0__:rq:registry:failed:{queue}` (zadd)
@@ -28,9 +30,9 @@ Subscription patterns (db 0):
 - `__keyspace@0__:rq:registry:started:{queue}` (zadd/zrem)
 
 When an event is received:
-- failed: page recent IDs via `ZREVRANGEBYSCORE` (bounded LIMIT windows). For each unseen ID: fetch job, summarize, publish `digits.train.failed.v1`, mark in `ProcessedStore`.
+- failed: page recent IDs via bounded queries. For each unseen ID: fetch job, summarize, publish `digits.train.failed.v1`, mark in `ProcessedStore`.
 - canceled: on `zadd`, publish `digits.train.failed.v1` with `error_kind="user"` and message `"Job canceled"`.
-- started: maintain an in-memory map of first-seen start times; on `zrem`, drop the ID. A periodic sweep marks IDs as stuck if older than `stuck_job_timeout_s` and still present (verified via `ZRANK`). Stuck → publish `digits.train.failed.v1` (`error_kind="system"`).
+- started/scheduled: optional future enhancements.
 
 Strict behavior: process exits with a clear error if it cannot subscribe or if `notify-keyspace-events` is not configured as required.
 
@@ -41,7 +43,7 @@ Strict behavior: process exits with a clear error if it cannot subscribe or if `
 
 ### Runner wiring
 
-- Replace `FailureWatcher` with `NotificationWatcher` exclusively. No mode/env toggle. Require envs: `REDIS_URL`, `RQ__QUEUE`, `DIGITS_EVENTS_CHANNEL`, `RQ_WATCHER_STUCK_TIMEOUT_SECONDS`.
+- Use `NotificationWatcher` exclusively. No mode/env toggle. Require envs: `REDIS_URL`, `RQ__QUEUES`, `DIGITS_EVENTS_CHANNEL`.
 - Preflight: assert `notify-keyspace-events` contains `Kz` before entering the main loop; otherwise raise. No fallback behavior.
 
 ## Behavior and Semantics
@@ -72,12 +74,14 @@ Upstash (pay-per-command) ballpark at $0.2/100k commands:
   - Required envs enforced; preflight failure raises; single-iteration run loop under monkeypatch for coverage.
 - Coverage and lint/type gates remain unchanged and must pass under `make check`.
 
-## Rollout Plan (No Back-Compat)
+## Operational Notes
 
-1. Introduce `NotificationWatcher` and wire runner to it exclusively.
-2. Delete polling watcher and its tests in the same PR.
-3. Land new unit/integration tests at 100% coverage.
-4. Deploy with Redis preconfigured for `notify-keyspace-events=Kz`.
+- Configure Redis with `notify-keyspace-events=Kz`.
+- Set env for the process:
+  - `REDIS_URL` (required)
+  - `RQ__QUEUES` (comma-separated queue names; default: `digits`)
+  - `DIGITS_EVENTS_CHANNEL` (default: `digits:events`)
+- Start the watcher: `python scripts/rq_keyspace_watcher.py`.
 
 ## Configuration Notes (Railway Redis)
 
@@ -85,16 +89,10 @@ Upstash (pay-per-command) ballpark at $0.2/100k commands:
 - Configure the instance with `notify-keyspace-events=Kz` ahead of deployment. The watcher fails fast if this is not set.
 - DB index assumed `0` for keyspace channel prefix (`__keyspace@0__`). If a non‑zero DB is required, adjust the subscription prefix accordingly in the implementation.
 
-## Files to Touch (Strict Plan)
+## Implementation Status
 
-- Add: `src/handwriting_ai/jobs/watcher/notify.py` — event-driven watcher (no Any/casts/ignores).
-- Update: `src/handwriting_ai/jobs/watcher/runner.py:1` — wire to `NotificationWatcher` only; enforce preflight.
-- Update: `src/handwriting_ai/jobs/watcher/adapters.py:1` — add typed pubsub/client methods.
-- Update: `src/handwriting_ai/jobs/watcher/ports.py:1` — add factories for pubsub/config access.
-- Add: `tests/test_keyspace_watcher_unit.py`, `tests/test_keyspace_watcher_runner.py` — full coverage.
-- Rename: `scripts/rq_failure_watcher.py:1` → `scripts/rq_keyspace_watcher.py` — new entrypoint.
-- Replace: `docs/failure_watcher.md:1` → `docs/keyspace_watcher.md` — event-driven only.
-- Remove: `src/handwriting_ai/jobs/watcher/watcher.py:1`, `tests/test_failure_watcher*.py`, `scripts/test_keyspace_notifications.py:1` — legacy polling and ad‑hoc demo.
+- Implemented: NotificationWatcher, ports/adapters extensions, runner entrypoint, and unit tests.
+- Removed: legacy polling watcher, tests, and old script.
 
 ## Appendix — Current Implementation Snapshot
 
