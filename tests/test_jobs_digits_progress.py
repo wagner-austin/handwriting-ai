@@ -8,6 +8,22 @@ from PIL import Image
 import handwriting_ai.jobs.digits as dj
 import handwriting_ai.training.mnist_train as mt
 from handwriting_ai.training.mnist_train import TrainConfig
+from handwriting_ai.training.resources import ResourceLimits
+
+
+@pytest.fixture(autouse=True)
+def _mock_resources(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock resource detection for Windows/non-container environments."""
+    limits = ResourceLimits(
+        cpu_cores=4,
+        memory_bytes=4 * 1024 * 1024 * 1024,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=64,
+    )
+    import handwriting_ai.training.runtime as rt
+
+    monkeypatch.setattr(rt, "detect_resource_limits", lambda: limits, raising=False)
 
 
 class _Pub:
@@ -97,9 +113,15 @@ def test_process_train_job_emits_progress(monkeypatch: pytest.MonkeyPatch, tmp_p
     assert "digits.train.epoch.v1" in joined
     assert "digits.train.completed.v1" in joined
     assert "digits.train.artifact.v1" in joined
+    # Verify order using string positions to avoid JSON typing
+    p_started = joined.find('"type":"digits.train.started.v1"')
+    p_art = joined.find('"type":"digits.train.artifact.v1"')
+    p_comp = joined.find('"type":"digits.train.completed.v1"')
+    assert p_started != -1 and p_art != -1 and p_comp != -1
+    assert p_started < p_art < p_comp
 
 
-def test_process_train_job_emitters_with_bad_publisher(
+def test_process_train_job_emitters_with_bad_publisher_raises(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # Use a bad publisher to exercise error paths inside the emitters
@@ -148,5 +170,6 @@ def test_process_train_job_emitters_with_bad_publisher(
         "notes": None,
     }
 
-    # Should complete without raising despite publisher failures inside emitters
-    dj.process_train_job(payload)
+    # Should raise when publisher fails during started event
+    with pytest.raises(OSError, match="fail"):
+        dj.process_train_job(payload)
