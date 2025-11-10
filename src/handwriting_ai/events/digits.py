@@ -159,6 +159,16 @@ class FailedV1(TypedDict):
     message: str
 
 
+class InterruptedV1(TypedDict):
+    type: Literal["digits.train.interrupted.v1"]
+    request_id: str
+    user_id: int
+    model_id: str
+    run_id: str | None
+    ts: str
+    path: str
+
+
 EventV1 = (
     StartedV1
     | BatchV1
@@ -169,6 +179,7 @@ EventV1 = (
     | PruneV1
     | CompletedV1
     | FailedV1
+    | InterruptedV1
 )
 
 
@@ -357,4 +368,16 @@ def failed(ctx: Context, *, error_kind: Literal["user", "system"], message: str)
         "ts": _ts(),
         "error_kind": error_kind,
         "message": message,
+    }
+
+
+def interrupted(ctx: Context, *, path: str) -> InterruptedV1:
+    return {
+        "type": "digits.train.interrupted.v1",
+        "request_id": ctx.request_id,
+        "user_id": int(ctx.user_id),
+        "model_id": ctx.model_id,
+        "run_id": ctx.run_id,
+        "ts": _ts(),
+        "path": path,
     }
