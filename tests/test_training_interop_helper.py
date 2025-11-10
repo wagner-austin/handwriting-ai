@@ -22,8 +22,9 @@ def test_configure_interop_threads_raises(monkeypatch: pytest.MonkeyPatch) -> No
         raise RuntimeError("boom")
 
     monkeypatch.setattr(torch, "set_num_interop_threads", _boom, raising=True)
-    # Should not raise
-    _configure_interop_threads(1)
+    # Should raise after logging
+    with pytest.raises(RuntimeError, match="boom"):
+        _configure_interop_threads(1)
 
 
 def test_configure_interop_threads_skips_on_none() -> None:
