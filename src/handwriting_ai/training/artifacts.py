@@ -94,8 +94,11 @@ def _delete_paths(paths: list[Path]) -> list[Path]:
         try:
             p.unlink()
             deleted.append(p)
-        except OSError:
-            logging.getLogger("handwriting_ai").info("prune_delete_failed")
+        except OSError as exc:
+            logging.getLogger("handwriting_ai").error(
+                "prune_delete_failed path=%s error=%s", p, exc
+            )
+            raise
     return deleted
 
 
@@ -109,9 +112,11 @@ def prune_model_artifacts(model_dir: Path, keep_runs: int) -> list[Path]:
     keep = max(0, int(keep_runs))
     try:
         entries = list(model_dir.iterdir())
-    except OSError:
-        logging.getLogger("handwriting_ai").info("prune_list_failed")
-        return []
+    except OSError as exc:
+        logging.getLogger("handwriting_ai").error(
+            "prune_list_failed dir=%s error=%s", model_dir, exc
+        )
+        raise
 
     # Collect all run_ids present in either side
     run_ids = {m[1] for p in entries if (m := _run_id_from_name(p.name)) is not None}
