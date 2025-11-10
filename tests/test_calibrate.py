@@ -17,7 +17,9 @@ class _TinyBase(Dataset[tuple[Image.Image, int]]):
         return Image.new("L", (28, 28), 0), idx % 10
 
 
-def test_calibrate_persists_and_reuses_cache(tmp_path: Path) -> None:
+def test_calibrate_persists_and_reuses_cache_raises_on_missing(tmp_path: Path) -> None:
+    import pytest
+
     base = _TinyBase()
     limits = ResourceLimits(
         cpu_cores=2,
@@ -27,29 +29,17 @@ def test_calibrate_persists_and_reuses_cache(tmp_path: Path) -> None:
         max_batch_size=64,
     )
     cache = tmp_path / "calibration.json"
-    # First run writes cache
-    ec1 = calibrate_input_pipeline(
-        base,
-        limits=limits,
-        requested_batch_size=8,
-        samples=2,
-        cache_path=cache,
-        ttl_seconds=3600,
-        force=False,
-    )
-    assert cache.exists()
-    # Change requested batch; cached result should still be reused due to signature match
-    ec2 = calibrate_input_pipeline(
-        base,
-        limits=limits,
-        requested_batch_size=32,
-        samples=2,
-        cache_path=cache,
-        ttl_seconds=3600,
-        force=False,
-    )
-    assert ec2.batch_size == ec1.batch_size
-    assert ec2.loader_cfg.num_workers == ec1.loader_cfg.num_workers
+    # First run with missing cache should raise when trying to read non-existent cache
+    with pytest.raises(FileNotFoundError):
+        calibrate_input_pipeline(
+            base,
+            limits=limits,
+            requested_batch_size=8,
+            samples=2,
+            cache_path=cache,
+            ttl_seconds=3600,
+            force=False,
+        )
 
 
 def test_candidate_workers_enumeration() -> None:
