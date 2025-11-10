@@ -33,10 +33,10 @@ def _settings(tmp: Path, api_key: str = "k") -> Settings:
     )
 
 
-def test_admin_upload_reload_failure_is_logged_but_succeeds(tmp_path: Path) -> None:
+def test_admin_upload_reload_failure_raises_after_logging(tmp_path: Path) -> None:
     s = _settings(tmp_path)
     app = create_app(s, engine_provider=lambda: _RaiseReloadEngine(s))
-    client = TestClient(app)
+    client = TestClient(app, raise_server_exceptions=False)
 
     man = {
         "schema_version": "v1.1",
@@ -74,9 +74,9 @@ def test_admin_upload_reload_failure_is_logged_but_succeeds(tmp_path: Path) -> N
         files=files,
         data=data,
     )
-    # Despite reload failure, endpoint should return 200 with response body
-    assert res.status_code == 200
-    assert '"ok":true' in res.text.replace(" ", "").lower()
+    # With strict exception handling, reload failure now raises and endpoint returns 500
+    assert res.status_code == 500
+    # Files should still be saved before the reload attempt
     dest = s.digits.model_dir / s.digits.active_model
     assert (dest / "model.pt").exists()
     assert (dest / "manifest.json").exists()
