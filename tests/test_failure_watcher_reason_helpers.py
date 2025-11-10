@@ -39,7 +39,37 @@ def test_detect_failed_reason_branches() -> None:
 
     assert logic.detect_failed_reason(_Blank(), "jid") is None
 
+    # hget returns non-empty string -> returned directly
+    class _Has:
+        def hget(self, key: str, field: str) -> str | bytes | None:  # pragma: no cover
+            return "reason"
+
+    assert logic.detect_failed_reason(_Has(), "jid") == "reason"
+
 
 def test_coerce_job_ids_ignores_other_types() -> None:
     out = logic.coerce_job_ids([123, object(), b"", "ok"])
     assert out == ["ok"]
+
+
+def test_summarize_exc_info_default_and_extract_payload_empty() -> None:
+    # Default branch when not a non-empty string
+    assert logic.summarize_exc_info(None) == "job failed"
+
+    class _Job:
+        args: object = []
+
+    # No args -> empty payload
+    assert logic.extract_payload(_Job()) == {}
+
+
+def test_make_logger_and_extract_payload_non_dict() -> None:
+    # make_logger returns our module logger
+    lg = logic.make_logger()
+    assert lg.name == "handwriting_ai"
+
+    class _Job:
+        args: object = [42]
+
+    # args present but first arg not dict -> {}
+    assert logic.extract_payload(_Job()) == {}
