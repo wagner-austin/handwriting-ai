@@ -46,6 +46,12 @@ class NotificationWatcher:
         db = self.ports.redis_db_index(self.redis_url)
         prefix = f"__keyspace@{db}__"
         pats: list[str] = []
+        if any(q == "*" for q in self.queues):
+            pats.append(f"{prefix}:rq:registry:failed:*")
+            pats.append(f"{prefix}:rq:registry:scheduled:*")
+            pats.append(f"{prefix}:rq:registry:canceled:*")
+            pats.append(f"{prefix}:rq:registry:started:*")
+            return pats
         for q in self.queues:
             pats.append(f"{prefix}:rq:registry:failed:{q}")
             pats.append(f"{prefix}:rq:registry:scheduled:{q}")
