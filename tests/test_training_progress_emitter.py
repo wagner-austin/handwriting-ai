@@ -22,6 +22,14 @@ from handwriting_ai.training.progress import (
 )
 
 
+@pytest.fixture(autouse=True)
+def _mock_monitoring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock monitoring functions that fail on non-container systems."""
+    import handwriting_ai.training.mnist_train as mt
+
+    monkeypatch.setattr(mt, "log_system_info", lambda: None, raising=False)
+
+
 class _TinyBase(Dataset[tuple[Image.Image, int]]):
     def __init__(self, n: int = 4) -> None:
         self._n = n
@@ -107,7 +115,7 @@ def test_progress_emitter_receives_epoch_updates(
     assert rec.calls[-1][0] <= cfg.epochs
 
 
-def test_progress_emitter_failure_swallowed(
+def test_progress_emitter_failure_raises_after_logging(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     cfg = _cfg(tmp_path)
@@ -132,8 +140,9 @@ def test_progress_emitter_failure_swallowed(
     monkeypatch.setattr(mt, "_train_epoch", _ok_train_epoch, raising=True)
     set_progress_emitter(_Bad())
     try:
-        out = mt.train_with_config(cfg, (train_base, test_base))
-        assert (out / "model.pt").exists()
+        # Should raise when emitter fails
+        with pytest.raises(ValueError, match="boom"):
+            mt.train_with_config(cfg, (train_base, test_base))
     finally:
         set_progress_emitter(None)
 
@@ -244,7 +253,7 @@ def test_batch_best_epoch_emitters_are_called() -> None:
     assert len(rec.batch) > 0 and len(rec.best) > 0 and len(rec.epoch) > 0
 
 
-def test_batch_best_epoch_emitter_failures_swallowed() -> None:
+def test_batch_best_epoch_emitter_failures_raise_after_logging() -> None:
     class _Bad:
         def emit_batch(self, metrics: BatchMetrics) -> None:
             raise ValueError("boom")
@@ -268,29 +277,32 @@ def test_batch_best_epoch_emitter_failures_swallowed() -> None:
     set_best_emitter(bad)
     set_epoch_emitter(bad)
 
-    # Calls should not raise
-    emit_batch(
-        BatchMetrics(
-            epoch=1,
-            total_epochs=2,
-            batch=1,
-            total_batches=2,
-            batch_loss=0.1,
-            batch_acc=0.9,
-            avg_loss=0.2,
-            samples_per_sec=10.0,
-            main_rss_mb=100,
-            workers_rss_mb=50,
-            worker_count=2,
-            cgroup_usage_mb=500,
-            cgroup_limit_mb=1000,
-            cgroup_pct=50.0,
-            anon_mb=200,
-            file_mb=150,
+    # Calls should raise after logging
+    with pytest.raises(ValueError, match="boom"):
+        emit_batch(
+            BatchMetrics(
+                epoch=1,
+                total_epochs=2,
+                batch=1,
+                total_batches=2,
+                batch_loss=0.1,
+                batch_acc=0.9,
+                avg_loss=0.2,
+                samples_per_sec=10.0,
+                main_rss_mb=100,
+                workers_rss_mb=50,
+                worker_count=2,
+                cgroup_usage_mb=500,
+                cgroup_limit_mb=1000,
+                cgroup_pct=50.0,
+                anon_mb=200,
+                file_mb=150,
+            )
         )
-    )
-    emit_best(epoch=1, val_acc=0.8)
-    emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
+    with pytest.raises(ValueError, match="boom"):
+        emit_best(epoch=1, val_acc=0.8)
+    with pytest.raises(ValueError, match="boom"):
+        emit_epoch(epoch=1, total_epochs=2, train_loss=0.3, val_acc=0.4, time_s=1.0)
 
 
 def test_emit_no_emitters_noop() -> None:
