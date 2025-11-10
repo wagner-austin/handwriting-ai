@@ -26,7 +26,7 @@ def _get_int(d: dict[str, object], key: str, default: int) -> int:
     v = d.get(key)
     if isinstance(v, bool):
         return default
-    if isinstance(v, (int | float)):
+    if isinstance(v, int | float):
         return int(v)
     if isinstance(v, str):
         try:
@@ -45,7 +45,7 @@ def _get_float(d: dict[str, object], key: str, default: float) -> float:
     v = d.get(key)
     if isinstance(v, bool):
         return default
-    if isinstance(v, (int | float)):
+    if isinstance(v, int | float):
         return float(v)
     if isinstance(v, str):
         try:
@@ -61,15 +61,9 @@ def _get_float(d: dict[str, object], key: str, default: float) -> float:
 
 
 def _read_cache(path: Path) -> tuple[CalibrationSignature, CalibrationResult, float] | None:
-    try:
-        raw = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        import logging as _logging
-
-        _logging.getLogger("handwriting_ai").error(
-            "calib_cache_read_failed path=%s error=%s", path, exc
-        )
+    if not path.exists():
         return None
+    raw = path.read_text(encoding="utf-8")
     try:
         parsed: object = json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -78,12 +72,15 @@ def _read_cache(path: Path) -> tuple[CalibrationSignature, CalibrationResult, fl
         _logging.getLogger("handwriting_ai").error(
             "calib_cache_decode_failed path=%s error=%s", path, exc
         )
+        raise
     root = _as_obj_dict(parsed)
     if root is None:
+        raise ValueError("calibration cache root must be an object")
     sig_raw = _as_obj_dict(root.get("signature"))
     res_raw = _as_obj_dict(root.get("result"))
     ts_raw = root.get("created_at_ts")
-    if sig_raw is None or res_raw is None or not isinstance(ts_raw, (int | float)):
+    if sig_raw is None or res_raw is None or not isinstance(ts_raw, int | float):
+        raise ValueError("calibration cache missing required fields")
     mem_v = sig_raw.get("mem_bytes")
     mem_parsed = _get_int(sig_raw, "mem_bytes", 0) if mem_v is not None else None
     sig = CalibrationSignature(
