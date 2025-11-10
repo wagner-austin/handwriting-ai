@@ -80,6 +80,7 @@ Upstash (pay-per-command) ballpark at $0.2/100k commands:
 - Set env for the process:
   - `REDIS_URL` (required)
   - `RQ__QUEUES` (comma-separated queue names; default: `digits`)
+    - Use `*` to watch all queues dynamically without enumerating them
   - `DIGITS_EVENTS_CHANNEL` (default: `digits:events`)
 - Start the watcher: `python scripts/rq_keyspace_watcher.py`.
 
