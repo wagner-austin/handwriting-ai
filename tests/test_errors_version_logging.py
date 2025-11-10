@@ -41,10 +41,11 @@ def test_version_fallback_logs_and_defaults(monkeypatch: pytest.MonkeyPatch) -> 
     logger = get_logger()
     logger.addHandler(h)
     try:
-        v = get_version()
+        # Should raise after logging when package not found
+        with pytest.raises((ImportError, ValueError, RuntimeError)):
+            get_version()
     finally:
         logger.removeHandler(h)
-    assert v.version == "0.1.0"
     assert "pkg_version_fallback" in buf.getvalue()
 
 
