@@ -12,8 +12,10 @@ from handwriting_ai.events.digits import BatchMetrics
 from handwriting_ai.logging import get_logger
 from handwriting_ai.monitoring import check_memory_pressure, get_memory_snapshot
 
+from .memory_diagnostics import log_memory_diagnostics
 from .progress import emit_batch as _emit_batch
 from .safety import get_memory_guard_config, on_batch_check
+from .train_utils import bytes_of_model_and_grads, torch_allocator_stats
 
 
 class _TrainableModel(Protocol):
@@ -85,6 +87,17 @@ def train_epoch(
             pressed = check_memory_pressure(threshold_percent=thr)
             press = "true" if pressed else "false"
 
+            # Model and gradient memory
+            param_b, grad_b = bytes_of_model_and_grads(model)  # bytes
+            model_param_mb = int(param_b // (1024 * 1024))
+            grad_param_mb = int(grad_b // (1024 * 1024))
+
+            # CUDA allocator stats (CPU-only envs report zeros)
+            cuda_ok, cuda_alloc_b, cuda_reserved_b, cuda_max_alloc_b = torch_allocator_stats()
+            cuda_alloc_mb = int(cuda_alloc_b // (1024 * 1024)) if cuda_ok else 0
+            cuda_reserved_mb = int(cuda_reserved_b // (1024 * 1024)) if cuda_ok else 0
+            cuda_max_alloc_mb = int(cuda_max_alloc_b // (1024 * 1024)) if cuda_ok else 0
+
             main_mb = snap.main_process.rss_bytes // (1024 * 1024)
             workers_mb = sum(w.rss_bytes for w in snap.workers) // (1024 * 1024)
             cgroup_usage_mb = snap.cgroup_usage.usage_bytes // (1024 * 1024)
@@ -102,8 +115,13 @@ def train_epoch(
                 f"cgroup_usage_mb={cgroup_usage_mb} cgroup_limit_mb={cgroup_limit_mb} "
                 f"cgroup_pct={snap.cgroup_usage.percent:.1f} "
                 f"anon_mb={anon_mb} file_mb={file_mb} "
-                f"mem_pressure={press} guard_threshold={thr:.1f}"
+                f"mem_pressure={press} guard_threshold={thr:.1f} "
+                f"model_param_mb={model_param_mb} grad_param_mb={grad_param_mb} "
+                f"cuda_alloc_mb={cuda_alloc_mb} cuda_reserved_mb={cuda_reserved_mb} "
+                f"cuda_max_alloc_mb={cuda_max_alloc_mb}"
             )
+            # Supplementary diagnostics for trend and prediction using the same snapshot
+            log_memory_diagnostics(context="train_batch", snapshot=snap)
             _emit_batch(
                 BatchMetrics(
                     epoch=ep,
