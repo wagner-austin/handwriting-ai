@@ -10,14 +10,9 @@ import psutil
 from .logging import get_logger
 
 # Cgroup v2 paths
-_CGROUP_V2_MEM_CURRENT: Path = Path("/sys/fs/cgroup/memory.current")
-_CGROUP_V2_MEM_MAX: Path = Path("/sys/fs/cgroup/memory.max")
-_CGROUP_V2_MEM_STAT: Path = Path("/sys/fs/cgroup/memory.stat")
-
-# Cgroup v1 paths
-_CGROUP_V1_MEM_USAGE: Path = Path("/sys/fs/cgroup/memory/memory.usage_in_bytes")
-_CGROUP_V1_MEM_LIMIT: Path = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
-_CGROUP_V1_MEM_STAT: Path = Path("/sys/fs/cgroup/memory/memory.stat")
+_CGROUP_MEM_CURRENT: Path = Path("/sys/fs/cgroup/memory.current")
+_CGROUP_MEM_MAX: Path = Path("/sys/fs/cgroup/memory.max")
+_CGROUP_MEM_STAT: Path = Path("/sys/fs/cgroup/memory.stat")
 
 
 @dataclass(frozen=True)
@@ -88,7 +83,7 @@ def _parse_cgroup_stat(content: str) -> dict[str, int]:
     """Parse cgroup memory.stat format into key-value pairs.
 
     Kernel format: each line is "<key> <value>" where value is an integer.
-    This is the documented stable interface for cgroup v1 and v2.
+    This parser targets the documented cgroup v2 memory.stat format.
 
     Skips malformed lines with logging to handle edge cases gracefully
     while maintaining visibility into parsing issues.
@@ -116,14 +111,14 @@ def _parse_cgroup_stat(content: str) -> dict[str, int]:
         try:
             value = int(value_str)
         except ValueError as exc:
-            logger.debug(
+            logger.error(
                 "cgroup_stat_parse_skip line=%d key=%s reason=invalid_int value=%r error=%s",
                 line_num,
                 key,
                 value_str,
                 exc,
             )
-            continue
+            raise
 
         result[key] = value
 
@@ -131,28 +126,17 @@ def _parse_cgroup_stat(content: str) -> dict[str, int]:
 
 
 def _read_cgroup_usage() -> CgroupMemoryUsage:
-    """Read cgroup memory usage and limit, trying v2 then v1."""
-    usage_bytes: int
-    limit_bytes: int
-
-    # Try cgroup v2
-    if _CGROUP_V2_MEM_CURRENT.exists():
-        usage_bytes = _read_cgroup_int(_CGROUP_V2_MEM_CURRENT)
-        limit_content = _read_cgroup_file(_CGROUP_V2_MEM_MAX)
-        if limit_content == "max":
-            msg = "cgroup v2 memory.max is 'max' (unlimited)"
-            raise RuntimeError(msg)
-        limit_bytes = int(limit_content)
-    elif _CGROUP_V1_MEM_USAGE.exists():
-        usage_bytes = _read_cgroup_int(_CGROUP_V1_MEM_USAGE)
-        limit_bytes = _read_cgroup_int(_CGROUP_V1_MEM_LIMIT)
-        # v1 can report very large values for unlimited
-        if limit_bytes >= (1 << 60):
-            msg = f"cgroup v1 memory limit is unlimited: {limit_bytes}"
-            raise RuntimeError(msg)
-    else:
+    """Read cgroup v2 memory usage and limit."""
+    if not _CGROUP_MEM_CURRENT.exists():
         msg = "no cgroup memory files found (not in container?)"
         raise RuntimeError(msg)
+
+    usage_bytes = _read_cgroup_int(_CGROUP_MEM_CURRENT)
+    limit_content = _read_cgroup_file(_CGROUP_MEM_MAX)
+    if limit_content == "max":
+        msg = "cgroup memory.max is 'max' (unlimited)"
+        raise RuntimeError(msg)
+    limit_bytes = int(limit_content)
 
     percent = (float(usage_bytes) / float(limit_bytes)) * 100.0
     return CgroupMemoryUsage(
@@ -163,22 +147,18 @@ def _read_cgroup_usage() -> CgroupMemoryUsage:
 
 
 def _read_cgroup_breakdown() -> CgroupMemoryBreakdown:
-    """Read cgroup memory breakdown from memory.stat.
+    """Read cgroup v2 memory breakdown from memory.stat.
 
     Validates that at least one core metric (anon or file) is present
     to ensure we got valid cgroup data.
     """
     import logging
 
-    stat_content: str
-    if _CGROUP_V2_MEM_STAT.exists():
-        stat_content = _read_cgroup_file(_CGROUP_V2_MEM_STAT)
-    elif _CGROUP_V1_MEM_STAT.exists():
-        stat_content = _read_cgroup_file(_CGROUP_V1_MEM_STAT)
-    else:
+    if not _CGROUP_MEM_STAT.exists():
         msg = "no cgroup memory.stat file found"
         raise RuntimeError(msg)
 
+    stat_content = _read_cgroup_file(_CGROUP_MEM_STAT)
     stats = _parse_cgroup_stat(stat_content)
 
     # Validate we got at least some expected fields
@@ -186,15 +166,11 @@ def _read_cgroup_breakdown() -> CgroupMemoryBreakdown:
         msg = "cgroup memory.stat parsing produced no valid entries"
         raise RuntimeError(msg)
 
-    # Extract required fields (keys differ slightly between v1/v2)
+    # Extract required fields
     anon = stats.get("anon", 0)
     file_cache = stats.get("file", 0)
-
-    # v2 uses "kernel" or "kernel_stack", v1 uses "total_kernel"
-    kernel = stats.get("kernel", stats.get("total_kernel", 0))
-
-    # v2 uses "slab", v1 uses "total_slab"
-    slab = stats.get("slab", stats.get("total_slab", 0))
+    kernel = stats.get("kernel", 0)
+    slab = stats.get("slab", 0)
 
     # Validate at least one core metric is present
     if anon == 0 and file_cache == 0:
@@ -222,10 +198,10 @@ def _get_worker_processes(parent_pid: int) -> tuple[ProcessMemory, ...]:
         parent = psutil.Process(parent_pid)
         children = parent.children(recursive=True)
     except (OSError, ValueError, RuntimeError) as exc:
-        logging.getLogger("handwriting_ai").debug(
+        logging.getLogger("handwriting_ai").error(
             "worker_process_lookup_failed pid=%s %s", parent_pid, exc
         )
-        return ()
+        raise
 
     workers: list[ProcessMemory] = []
     for child in children:
@@ -237,8 +213,8 @@ def _get_worker_processes(parent_pid: int) -> tuple[ProcessMemory, ...]:
             if isinstance(rss_val, int) and isinstance(pid_val, int):
                 workers.append(ProcessMemory(pid=pid_val, rss_bytes=rss_val))
         except (OSError, ValueError, RuntimeError) as exc:
-            logging.getLogger("handwriting_ai").debug("worker_memory_read_failed %s", exc)
-            continue
+            logging.getLogger("handwriting_ai").error("worker_memory_read_failed %s", exc)
+            raise
 
     return tuple(workers)
 
@@ -368,8 +344,8 @@ class SystemMemoryMonitor:
 
 
 def _detect_cgroups_available() -> bool:
-    """Detect if cgroup memory files are available."""
-    return _CGROUP_V2_MEM_CURRENT.exists() or _CGROUP_V1_MEM_USAGE.exists()
+    """Detect if cgroup v2 memory files are available."""
+    return _CGROUP_MEM_CURRENT.exists()
 
 
 def _create_monitor() -> MemoryMonitor:
@@ -405,15 +381,12 @@ def log_memory_snapshot(*, context: str = "") -> None:
 
 def log_system_info() -> None:
     """Log system CPU and memory information at startup."""
-    import logging as _logging
-
     log = get_logger()
     cpu_logical = int(psutil.cpu_count(logical=True) or 0)
     cpu_physical_val = psutil.cpu_count(logical=False)
     cpu_physical = int(cpu_physical_val) if cpu_physical_val is not None else 0
 
-    # Log cgroup limits if available
-    try:
+    if _detect_cgroups_available():
         cgroup = _read_cgroup_usage()
         limit_mb = cgroup.limit_bytes // (1024 * 1024)
         log.info(
@@ -421,16 +394,15 @@ def log_system_info() -> None:
             f"cpu_logical={cpu_logical} cpu_physical={cpu_physical} "
             f"cgroup_mem_limit_mb={limit_mb}"
         )
-    except RuntimeError as exc:
-        # Not in container, log system memory instead
-        _logging.getLogger("handwriting_ai").debug("cgroup_unavailable %s", exc)
-        mem = psutil.virtual_memory()
-        total_mb = int(mem.total // (1024 * 1024))
-        log.info(
-            "system_info "
-            f"cpu_logical={cpu_logical} cpu_physical={cpu_physical} "
-            f"system_mem_total_mb={total_mb}"
-        )
+        return
+    # Non-container path: use system memory metrics; propagate failures
+    vm = psutil.virtual_memory()
+    limit_mb = int(vm.total // (1024 * 1024))
+    log.info(
+        "system_info "
+        f"cpu_logical={cpu_logical} cpu_physical={cpu_physical} "
+        f"system_total_mb={limit_mb}"
+    )
 
 
 __all__ = [
