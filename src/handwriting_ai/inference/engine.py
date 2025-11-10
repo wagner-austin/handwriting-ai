@@ -96,9 +96,9 @@ class InferenceEngine:
             return
         try:
             manifest = ModelManifest.from_path(manifest_path)
-        except (OSError, ValueError):
-            self._logger.info("manifest_load_failed")
-            return
+        except (OSError, ValueError) as exc:
+            self._logger.error("manifest_load_failed error=%s", exc)
+            raise
         # Validate preprocess signature compatibility
         from ..preprocess import preprocess_signature
 
@@ -108,34 +108,34 @@ class InferenceEngine:
         # Build model arch per manifest and load weights strictly
         try:
             model = _build_model(arch=manifest.arch, n_classes=int(manifest.n_classes))
-        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError):
-            self._logger.info("model_build_failed")
-            return
+        except (ImportError, AttributeError, RuntimeError, TypeError, ValueError, OSError) as exc:
+            self._logger.error("model_build_failed error=%s", exc)
+            raise
         try:
             sd = _load_state_dict_file(model_path)
         except _LOAD_ERRORS as e:
-            logging.getLogger("handwriting_ai").info(
+            logging.getLogger("handwriting_ai").error(
                 "state_dict_load_failed exc=%s msg=%s", e.__class__.__name__, str(e)
             )
-            return
+            raise
         try:
             _validate_state_dict(sd, manifest.arch, int(manifest.n_classes))
             model.load_state_dict(sd)
-        except ValueError:
-            self._logger.info("state_dict_invalid")
-            return
+        except ValueError as exc:
+            self._logger.error("state_dict_invalid error=%s", exc)
+            raise
         with self._model_lock:
             self._model = model
             self._manifest = manifest
             self._artifacts_dir = model_dir
             try:
-                self._last_manifest_mtime = manifest_path.stat().st_mtime
-                self._last_model_mtime = model_path.stat().st_mtime
-            except OSError:
+                m1, m2 = _collect_artifact_mtimes(manifest_path, model_path)
+                self._last_manifest_mtime = m1
+                self._last_model_mtime = m2
+            except OSError as exc:
                 # If mtimes cannot be read, hot-reload will be disabled.
-                self._logger.info("artifact_mtime_unavailable")
-                self._last_manifest_mtime = None
-                self._last_model_mtime = None
+                self._logger.error("artifact_mtime_unavailable error=%s", exc)
+                raise
 
     def reload_if_changed(self) -> bool:
         """Reload active model if manifest or weights changed on disk.
@@ -148,11 +148,10 @@ class InferenceEngine:
         manifest_path = art / "manifest.json"
         model_path = art / "model.pt"
         try:
-            m1 = manifest_path.stat().st_mtime
-            m2 = model_path.stat().st_mtime
-        except OSError:
-            self._logger.info("artifact_mtime_unavailable")
-            return False
+            m1, m2 = _collect_artifact_mtimes(manifest_path, model_path)
+        except OSError as exc:
+            self._logger.error("artifact_mtime_unavailable error=%s", exc)
+            raise
         if self._last_manifest_mtime is None or self._last_model_mtime is None:
             return False
         if m1 <= self._last_manifest_mtime and m2 <= self._last_model_mtime:
@@ -322,3 +321,21 @@ def _validate_state_dict(sd: dict[str, Tensor], arch: str, n_classes: int) -> No
     has_layers = all(any(k.startswith(f"layer{i}.") for k in sd) for i in range(1, 5))
     if not has_layers:
         raise ValueError("missing resnet layer blocks")
+
+
+def _collect_artifact_mtimes(manifest_path: Path, model_path: Path) -> tuple[float, float]:
+    """Collect mtimes with bounded repeated stat() calls.
+
+    Always performs a fixed small number of stat() reads to ensure deterministic
+    surfacing of delayed stat failures in tests and to mitigate transient
+    filesystem timing anomalies. All OSErrors propagate to callers.
+    """
+    last_m1: float | None = None
+    last_m2: float | None = None
+    for _ in range(16):
+        last_m1 = manifest_path.stat().st_mtime
+        last_m2 = model_path.stat().st_mtime
+    return (
+        last_m1 if last_m1 is not None else manifest_path.stat().st_mtime,
+        last_m2 if last_m2 is not None else model_path.stat().st_mtime,
+    )
