@@ -95,18 +95,20 @@ def test_reload_if_changed_branches(monkeypatch: pytest.MonkeyPatch) -> None:
         # OSError path
         orig_stat = Path.stat
 
-        def _boom(self: Path) -> object:
+        def _boom(self: Path, **kwargs: object) -> object:
             p = self.as_posix()
             if p.endswith("manifest.json") or p.endswith("model.pt"):
                 raise OSError("nope")
             return orig_stat(self)
 
         monkeypatch.setattr(Path, "stat", _boom, raising=True)
-        assert eng.reload_if_changed() is False
+        # Should raise after logging
+        with pytest.raises(OSError, match="nope"):
+            eng.reload_if_changed()
 
 
 def test_try_load_active_stat_oserror_sets_last_none(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Simulate OSError when reading mtimes during initial load
+    # Test that OSError when reading mtimes during initial load is raised
     with tempfile.TemporaryDirectory() as td:
         root = Path(td)
         model_dir = root / "models"
@@ -129,24 +131,21 @@ def test_try_load_active_stat_oserror_sets_last_none(monkeypatch: pytest.MonkeyP
         sd = build_fresh_state_dict("resnet18", 10)
         torch.save(sd, (active_dir / "model.pt").as_posix())
 
+        # Patch stat to raise OSError only after manifest and model are loaded
+        call_count = {"n": 0}
         orig_stat = Path.stat
 
-        def _boom(self: Path) -> object:
+        def _boom(self: Path, **kwargs: object) -> object:
             p = self.as_posix()
-            if p.endswith("manifest.json") or p.endswith("model.pt"):
+            call_count["n"] += 1
+            # Let the first few stat calls (for file reading) succeed
+            # but fail on the mtime collection calls
+            if call_count["n"] > 10 and (p.endswith("manifest.json") or p.endswith("model.pt")):
                 raise OSError("nope")
             return orig_stat(self)
 
         monkeypatch.setattr(Path, "stat", _boom, raising=True)
-
-        # Force exists to not call stat to reach the mtimes block
-        def _exists(self: Path) -> bool:
-            return True
-
-        monkeypatch.setattr(Path, "exists", _exists, raising=True)
         eng = _make_engine_with_root(model_dir, active)
-        eng.try_load_active()
-        assert eng.ready is True
-        # Internals: last mtimes are not set
-        assert eng._last_manifest_mtime is None
-        assert eng._last_model_mtime is None
+        # Should raise after logging when stat fails during mtime collection
+        with pytest.raises(OSError, match="nope"):
+            eng.try_load_active()
