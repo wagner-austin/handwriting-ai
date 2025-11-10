@@ -29,7 +29,9 @@ def _scan_silent_excepts(path: Path, lines: list[str]) -> list[Violation]:
     out: list[Violation] = []
     n = len(lines)
     idx = 0
-    is_watcher = path.as_posix().startswith("src/handwriting_ai/jobs/watcher/")
+    path_str = path.as_posix()
+    in_src = path_str.startswith("src/")
+
     while idx < n:
         raw = lines[idx]
         if not raw.lstrip().startswith("except"):
@@ -38,7 +40,10 @@ def _scan_silent_excepts(path: Path, lines: list[str]) -> list[Violation]:
         indent = len(raw) - len(raw.lstrip(" \t"))
         next_idx, found_raise, found_log = _block_signals(lines, idx + 1, indent)
         func_name = _enclosing_function_name(lines, idx, indent)
-        strict = bool(is_watcher and func_name != "run_forever")
+        # Enforce "must raise in except" across source files by default,
+        # but allow specific functions/modules to log-and-continue when
+        # explicitly permitted by policy below.
+        strict = bool(in_src and (func_name != "run_forever"))
         ok = found_raise if strict else (found_raise or found_log)
         if not ok:
             out.append(Violation(path, idx + 1, "silent-except", raw.rstrip()))
