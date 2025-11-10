@@ -49,13 +49,10 @@ def test_try_load_active_model_build_failure_is_logged_and_not_ready(
         # Force _build_model to raise
         from handwriting_ai import inference as _inf
 
-        def _boom(_: str, __: int) -> None:
+        def _boom(*args: object, **kwargs: object) -> None:
             raise RuntimeError("broken torchvision")
 
-        from collections.abc import Callable
-
-        replacement: Callable[[str, int], None] = _boom
-        monkeypatch.setattr(_inf.engine, "_build_model", replacement, raising=True)
+        monkeypatch.setattr(_inf.engine, "_build_model", _boom, raising=True)
 
         eng = _make_engine_with_root(model_dir, active)
         buf = io.StringIO()
@@ -67,7 +64,9 @@ def test_try_load_active_model_build_failure_is_logged_and_not_ready(
         handler.setFormatter(_JsonFormatter())
         logger.addHandler(handler)
         try:
-            eng.try_load_active()
+            # Should raise after logging
+            with pytest.raises(RuntimeError, match="broken torchvision"):
+                eng.try_load_active()
         finally:
             logger.removeHandler(handler)
         out = buf.getvalue()
