@@ -27,9 +27,10 @@ def _pkg_version() -> str:
         from importlib.metadata import PackageNotFoundError, version
 
         return version("handwriting-ai")
-    except PackageNotFoundError:
+    except PackageNotFoundError as exc:
         from .logging import get_logger
 
         logger = get_logger()
-        logger.info("pkg_version_fallback")
-        return "0.1.0"
+        logger.warning("pkg_version_fallback error=%s", exc)
+        # Normalize to a generic runtime error for callers
+        raise RuntimeError("package version not found") from exc
