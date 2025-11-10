@@ -41,5 +41,19 @@ def test_progress_emitter_no_publisher_noops() -> None:
 
 def test_emit_failed_without_publisher(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(dj, "_make_publisher", lambda: None, raising=True)
-    # Should not raise when publisher is None
-    dj._emit_failed({}, "user", "bad")
+    # _emit_failed should succeed when publisher is None (events just aren't sent)
+    # But if there's a genuine error in the payload processing, it should raise
+    # Test that it handles None publisher gracefully
+    import pytest
+
+    # With a valid dict payload and None publisher, should succeed
+    dj._emit_failed({"request_id": "r"}, "user", "bad")
+
+    # With invalid payload that causes internal error, should raise
+    # (Testing the strict exception handling path)
+    class _BadDict:
+        def get(self, key: str, default: object = None) -> object:
+            raise ValueError("dict access failed")
+
+    with pytest.raises(ValueError, match="dict access failed"):
+        dj._emit_failed(_BadDict(), "user", "bad")
