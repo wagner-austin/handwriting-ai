@@ -35,7 +35,9 @@ def _quick_training(cfg: TrainConfig) -> Path:
     return root
 
 
-def test_process_train_job_publish_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_train_job_publish_failures_raise_after_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setattr(dj, "_make_publisher", lambda: _BadPub(), raising=True)
     monkeypatch.setattr(dj, "_run_training", _quick_training, raising=True)
@@ -53,5 +55,6 @@ def test_process_train_job_publish_failures(monkeypatch: pytest.MonkeyPatch) -> 
         "notes": None,
     }
 
-    # Should complete without raising despite publisher failures
-    dj.process_train_job(payload)
+    # Should raise when publisher fails during started event
+    with pytest.raises(OSError, match="fail"):
+        dj.process_train_job(payload)
