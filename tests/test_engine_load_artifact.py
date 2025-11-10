@@ -66,6 +66,12 @@ def test_engine_try_load_active_bad_model_file(tmp_path: Path) -> None:
     (dest / "manifest.json").write_text(manifest, encoding="utf-8")
     s = _settings(tmp_path, model_id)
     eng = InferenceEngine(s)
-    eng.try_load_active()
+    # Should raise after logging due to bad model file
+    import pickle
+
+    import pytest
+
+    with pytest.raises((OSError, ValueError, RuntimeError, pickle.UnpicklingError)):
+        eng.try_load_active()
     # Should not be ready due to bad model file
     assert eng.ready is False
