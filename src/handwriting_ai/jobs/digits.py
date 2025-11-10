@@ -5,7 +5,7 @@ import logging
 import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Final, Literal, Protocol, TypedDict
+from typing import Final, Literal, Protocol, TypedDict, runtime_checkable
 
 from handwriting_ai.config import Settings
 from handwriting_ai.events import digits as ev
@@ -20,7 +20,7 @@ from handwriting_ai.training.progress import (
 from handwriting_ai.training.progress import (
     set_epoch_emitter as _set_epoch_emitter,
 )
-from handwriting_ai.training.resources import detect_resource_limits
+from handwriting_ai.training.runtime import detect_resource_limits
 from handwriting_ai.training.safety import get_memory_guard_config as _get_mg_cfg
 
 DEFAULT_EVENTS_CHANNEL: Final[str] = "digits:events"
@@ -91,6 +91,11 @@ class Publisher(Protocol):
     def publish(self, channel: str, message: str) -> int: ...
 
 
+@runtime_checkable
+class _PayloadMapping(Protocol):
+    def get(self, key: str, default: object = ...) -> object: ...
+
+
 def _get_env(name: str, default: str) -> str:
     v = os.getenv(name)
     return v if isinstance(v, str) and v.strip() != "" else default
@@ -101,8 +106,9 @@ def _publish_event(pub: Publisher | None, channel: str, event: Event) -> None:
         return
     try:
         pub.publish(channel, encode_event(event))
-    except (OSError, ValueError):
-        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+    except (OSError, ValueError) as exc:
+        logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+        raise
 
 
 def _load_settings() -> Settings:
@@ -181,7 +187,7 @@ def process_train_job(payload: dict[str, object]) -> None:
     typ = payload.get("type") if isinstance(payload, dict) else None
     if typ != "digits.train.v1":
         _emit_failed(payload, "user", "invalid job type")
-        return
+        raise ValueError("invalid job type")
 
     try:
         p: DigitsTrainJobV1 = {
@@ -196,10 +202,11 @@ def process_train_job(payload: dict[str, object]) -> None:
             "augment": bool(payload.get("augment", False)),
             "notes": (str(payload["notes"]) if isinstance(payload.get("notes"), str) else None),
         }
-    except (ValueError, TypeError):
-        logging.getLogger("handwriting_ai").info("digits_job_invalid_payload")
-        _emit_failed(payload, "user", "invalid payload fields")
-        return
+    except (ValueError, TypeError) as exc:
+        logging.getLogger("handwriting_ai").error("digits_job_invalid_payload error=%s", exc)
+        # Publish a versioned failed event before propagating
+        _emit_failed(payload, "user", f"Invalid payload: {exc}")
+        raise
 
     ctx = _make_context()
 
@@ -232,11 +239,7 @@ def process_train_job(payload: dict[str, object]) -> None:
             noise_prob=float(cfg.noise_prob),
             dots_prob=float(cfg.dots_prob),
         )
-        try:
-            if ctx.publisher is not None:
-                ctx.publisher.publish(ctx.channel, ev.encode_event(_started_v1))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        _publish_event_safe(ctx, _started_v1)
         # Bridge training progress to events via a DI-safe emitter
         _em = _ProgressEmitter(
             publisher=ctx.publisher,
@@ -254,35 +257,36 @@ def process_train_job(payload: dict[str, object]) -> None:
         man = ModelManifest.from_path(model_dir / "manifest.json")
         # Update emitter with run id and publish artifact event
         _em.set_run_id(man.created_at.isoformat())
-        try:
-            if ctx.publisher is not None:
-                _art = ev.artifact(
-                    ev.Context(
-                        request_id=p["request_id"],
-                        user_id=p["user_id"],
-                        model_id=p["model_id"],
-                        run_id=man.created_at.isoformat(),
-                    ),
-                    path=str(model_dir),
-                )
-                ctx.publisher.publish(ctx.channel, ev.encode_event(_art))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        _art = ev.artifact(
+            ev.Context(
+                request_id=p["request_id"],
+                user_id=p["user_id"],
+                model_id=p["model_id"],
+                run_id=man.created_at.isoformat(),
+            ),
+            path=str(model_dir),
+        )
+        _publish_event_safe(ctx, _art)
         # Versioned completed (no legacy fallback)
-        try:
-            if ctx.publisher is not None:
-                _comp = ev.completed(
-                    ev.Context(
-                        request_id=p["request_id"],
-                        user_id=p["user_id"],
-                        model_id=p["model_id"],
-                        run_id=man.created_at.isoformat(),
-                    ),
-                    val_acc=float(man.val_acc),
-                )
-                ctx.publisher.publish(ctx.channel, ev.encode_event(_comp))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        _comp = ev.completed(
+            ev.Context(
+                request_id=p["request_id"],
+                user_id=p["user_id"],
+                model_id=p["model_id"],
+                run_id=man.created_at.isoformat(),
+            ),
+            val_acc=float(man.val_acc),
+        )
+        _publish_event_safe(ctx, _comp)
+    except KeyboardInterrupt as exc:
+        logging.getLogger("handwriting_ai").error("training_interrupted error=%s", exc)
+        # Emit interrupted event (train_with_config saves artifacts before returning)
+        _emit_interrupted(
+            payload,
+            run_id=man.created_at.isoformat() if man else None,
+            path=str(model_dir) if model_dir else "",
+        )
+        raise
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
         _emit_failed(payload, "system", _summarize_training_exception(exc))
         raise
@@ -295,6 +299,16 @@ def _make_context() -> _Context:
     pub = _make_publisher()
     ch = _get_env("DIGITS_EVENTS_CHANNEL", DEFAULT_EVENTS_CHANNEL)
     return _Context(publisher=pub, channel=ch)
+
+
+def _publish_event_safe(ctx: _Context, event: ev.EventV1) -> None:
+    """Publish event with error handling. Raises on publish failure."""
+    try:
+        if ctx.publisher is not None:
+            ctx.publisher.publish(ctx.channel, ev.encode_event(event))
+    except (OSError, ValueError) as exc:
+        logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+        raise
 
 
 def _make_publisher() -> Publisher | None:
@@ -371,6 +385,7 @@ class _ProgressEmitter:
                 self._req,
                 exc_info=True,
             )
+            raise
 
     def emit_best(self, *, epoch: int, val_acc: float) -> None:
         try:
@@ -386,8 +401,9 @@ class _ProgressEmitter:
                     val_acc=float(val_acc),
                 )
                 self._publisher.publish(self._channel, ev.encode_event(msg))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        except (OSError, ValueError) as exc:
+            logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+            raise
 
     def emit_epoch(
         self,
@@ -414,8 +430,9 @@ class _ProgressEmitter:
                     time_s=float(time_s),
                 )
                 self._publisher.publish(self._channel, ev.encode_event(msg))
-        except (OSError, ValueError):
-            logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+        except (OSError, ValueError) as exc:
+            logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+            raise
 
 
 def _as_int(v: object) -> int:
@@ -449,11 +466,14 @@ def _emit_failed(
     mid = ""
     if isinstance(payload, dict):
         req = str(payload.get("request_id", ""))
-        try:
-            uid = _as_int(payload.get("user_id"))
-        except ValueError:
-            logging.getLogger("handwriting_ai").debug("digits_job_user_id_invalid")
-            uid = 0
+        raw_uid = payload.get("user_id", None)
+        uid = raw_uid if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) else 0
+        mid = str(payload.get("model_id", ""))
+    elif isinstance(payload, _PayloadMapping):
+        # Dict-like; allow attribute errors or value errors to propagate
+        req = str(payload.get("request_id", ""))
+        raw_uid = payload.get("user_id", None)
+        uid = raw_uid if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) else 0
         mid = str(payload.get("model_id", ""))
     # Versioned failed (no legacy fallback)
     try:
@@ -464,5 +484,28 @@ def _emit_failed(
                 message=msg,
             )
             ctx.publisher.publish(ctx.channel, ev.encode_event(_f))
-    except (OSError, ValueError):
-        logging.getLogger("handwriting_ai").debug("digits_event_publish_failed")
+    except (OSError, ValueError) as exc:
+        logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+        raise
+
+
+def _emit_interrupted(payload: dict[str, object] | object, run_id: str | None, path: str) -> None:
+    ctx = _make_context()
+    req = ""
+    uid = 0
+    mid = ""
+    if isinstance(payload, dict | _PayloadMapping):
+        req = str(payload.get("request_id", ""))
+        raw_uid = payload.get("user_id", None)
+        uid = raw_uid if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) else 0
+        mid = str(payload.get("model_id", ""))
+    try:
+        if ctx.publisher is not None:
+            _i = ev.interrupted(
+                ev.Context(request_id=req, user_id=uid, model_id=mid, run_id=run_id),
+                path=path,
+            )
+            ctx.publisher.publish(ctx.channel, ev.encode_event(_i))
+    except (OSError, ValueError) as exc:
+        logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
+        raise
