@@ -45,9 +45,10 @@ else:  # pragma: no cover - runtime only
     def rq_connect(url: str) -> RedisDebugClientProto:
         import redis
 
+        # RQ stores binary (pickled) payloads; decode_responses must be False
         return redis.Redis.from_url(
             url,
-            decode_responses=True,
+            decode_responses=False,
             socket_connect_timeout=5.0,
             socket_timeout=10.0,
         )
