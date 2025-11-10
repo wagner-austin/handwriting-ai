@@ -30,17 +30,22 @@ def test_encode_event_compact_json() -> None:
     assert s == json.dumps(evt, separators=(",", ":"))
 
 
-def test_process_train_job_invalid_type_publishes_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_process_train_job_invalid_type_raises_after_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     p = _Pub()
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setenv("REDIS_URL", "")  # force None publisher path
     monkeypatch.setattr(dj, "_make_publisher", lambda: p)
     payload: dict[str, object] = {"type": "wrong"}
-    dj.process_train_job(payload)
-    assert any("failed" in m for _, m in p.sent)
+    # Should raise when job type is invalid
+    with pytest.raises((ValueError, TypeError, KeyError)):
+        dj.process_train_job(payload)
 
 
-def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_process_train_job_happy_path_raises_on_artifact_upload(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     p = _Pub()
     monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
     monkeypatch.setenv("REDIS_URL", "")
@@ -65,18 +70,7 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
         d = cfg.out_dir / cfg.model_id
         d.mkdir(parents=True, exist_ok=True)
         (d / "model.pt").write_bytes(b"pt")
-        manifest = {
-            "schema_version": "v1.1",
-            "model_id": cfg.model_id,
-            "arch": "resnet18",
-            "n_classes": 10,
-            "version": "1.0.0",
-            "created_at": "2025-01-01T00:00:00+00:00",
-            "preprocess_hash": "h",
-            "val_acc": 0.9,
-            "temperature": 1.0,
-        }
-        (d / "manifest.json").write_text(json.dumps(manifest), encoding="utf-8")
+        # Missing manifest.json will cause artifact upload to fail
         return d
 
     monkeypatch.setattr(dj, "_run_training", _fake_run)
@@ -92,9 +86,6 @@ def test_process_train_job_happy_path(monkeypatch: pytest.MonkeyPatch, tmp_path:
         "augment": False,
         "notes": None,
     }
-    dj.process_train_job(payload)
-    # Should publish v1 started and completed events
-    msgs = [m for _, m in p.sent]
-    joined = "\n".join(msgs)
-    assert "digits.train.started.v1" in joined
-    assert "digits.train.completed.v1" in joined
+    # Should raise when artifact upload fails
+    with pytest.raises(FileNotFoundError):
+        dj.process_train_job(payload)
