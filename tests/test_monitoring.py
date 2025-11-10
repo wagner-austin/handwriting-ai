@@ -113,30 +113,32 @@ slab 300
     assert result == {"anon": 100, "slab": 300}
 
 
-def test_parse_cgroup_stat_invalid_integer() -> None:
-    """Test parsing skips lines with non-integer values"""
+def test_parse_cgroup_stat_invalid_integer_raises_after_logging() -> None:
+    """Test parsing raises on lines with non-integer values after logging"""
     content = """anon 100
 file not_a_number
 kernel 300
 slab -invalid
 total 400
 """
-    result = mon._parse_cgroup_stat(content)
-    # Should skip file and slab, keep anon, kernel, total
-    assert result == {"anon": 100, "kernel": 300, "total": 400}
+    import pytest
+
+    # Should raise ValueError when encountering non-integer value
+    with pytest.raises(ValueError):
+        mon._parse_cgroup_stat(content)
 
 
 # Test cgroup reading functions
 
 
-def test_read_cgroup_usage_v2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_read_cgroup_usage(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     current_file = tmp_path / "memory.current"
     max_file = tmp_path / "memory.max"
     current_file.write_text("524288000", encoding="utf-8")
     max_file.write_text("1048576000", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
 
     usage = mon._read_cgroup_usage()
     assert usage.usage_bytes == 524288000
@@ -144,65 +146,29 @@ def test_read_cgroup_usage_v2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -
     assert abs(usage.percent - 50.0) < 0.01
 
 
-def test_read_cgroup_usage_v2_unlimited(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_read_cgroup_usage_unlimited(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     current_file = tmp_path / "memory.current"
     max_file = tmp_path / "memory.max"
     current_file.write_text("524288000", encoding="utf-8")
     max_file.write_text("max", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
-
-    with pytest.raises(RuntimeError, match="unlimited"):
-        mon._read_cgroup_usage()
-
-
-def test_read_cgroup_usage_v1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    usage_file = tmp_path / "memory.usage_in_bytes"
-    limit_file = tmp_path / "memory.limit_in_bytes"
-    usage_file.write_text("262144000", encoding="utf-8")
-    limit_file.write_text("1048576000", encoding="utf-8")
-
-    # Make v2 files not exist
-    v2_current = tmp_path / "v2_current"
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", usage_file)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_LIMIT", limit_file)
-
-    usage = mon._read_cgroup_usage()
-    assert usage.usage_bytes == 262144000
-    assert usage.limit_bytes == 1048576000
-    assert abs(usage.percent - 25.0) < 0.01
-
-
-def test_read_cgroup_usage_v1_unlimited(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    usage_file = tmp_path / "memory.usage_in_bytes"
-    limit_file = tmp_path / "memory.limit_in_bytes"
-    usage_file.write_text("262144000", encoding="utf-8")
-    limit_file.write_text(str(1 << 61), encoding="utf-8")
-
-    v2_current = tmp_path / "v2_current"
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", usage_file)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_LIMIT", limit_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
 
     with pytest.raises(RuntimeError, match="unlimited"):
         mon._read_cgroup_usage()
 
 
 def test_read_cgroup_usage_no_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    v2_current = tmp_path / "v2_current"
-    v1_usage = tmp_path / "v1_usage"
+    current = tmp_path / "current"
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", v1_usage)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current)
 
     with pytest.raises(RuntimeError, match="no cgroup memory files found"):
         mon._read_cgroup_usage()
 
 
-def test_read_cgroup_breakdown_v2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_read_cgroup_breakdown(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     stat_file = tmp_path / "memory.stat"
     stat_content = """anon 100000000
 file 200000000
@@ -211,7 +177,7 @@ slab 25000000
 other_field 12345
 """
     stat_file.write_text(stat_content, encoding="utf-8")
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     breakdown = mon._read_cgroup_breakdown()
     assert breakdown.anon_bytes == 100000000
@@ -220,33 +186,13 @@ other_field 12345
     assert breakdown.slab_bytes == 25000000
 
 
-def test_read_cgroup_breakdown_v1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    stat_file = tmp_path / "memory.stat"
-    stat_content = """anon 75000000
-file 150000000
-total_kernel 30000000
-total_slab 15000000
-"""
-    stat_file.write_text(stat_content, encoding="utf-8")
-
-    v2_stat = tmp_path / "v2_stat"
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", v2_stat)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_STAT", stat_file)
-
-    breakdown = mon._read_cgroup_breakdown()
-    assert breakdown.anon_bytes == 75000000
-    assert breakdown.file_bytes == 150000000
-    assert breakdown.kernel_bytes == 30000000
-    assert breakdown.slab_bytes == 15000000
-
-
 def test_read_cgroup_breakdown_missing_fields(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     stat_file = tmp_path / "memory.stat"
     stat_content = "other_field 12345\n"
     stat_file.write_text(stat_content, encoding="utf-8")
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     breakdown = mon._read_cgroup_breakdown()
     assert breakdown.anon_bytes == 0
@@ -256,11 +202,9 @@ def test_read_cgroup_breakdown_missing_fields(
 
 
 def test_read_cgroup_breakdown_no_files(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    v2_stat = tmp_path / "v2_stat"
-    v1_stat = tmp_path / "v1_stat"
+    stat = tmp_path / "stat"
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", v2_stat)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_STAT", v1_stat)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat)
 
     with pytest.raises(RuntimeError, match="no cgroup memory.stat file found"):
         mon._read_cgroup_breakdown()
@@ -270,25 +214,26 @@ def test_read_cgroup_breakdown_empty_file(monkeypatch: pytest.MonkeyPatch, tmp_p
     """Test that empty stat file raises RuntimeError"""
     stat_file = tmp_path / "memory.stat"
     stat_file.write_text("", encoding="utf-8")
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     with pytest.raises(RuntimeError, match="parsing produced no valid entries"):
         mon._read_cgroup_breakdown()
 
 
-def test_read_cgroup_breakdown_all_invalid_lines(
+def test_read_cgroup_breakdown_all_invalid_lines_raises_after_logging(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Test that file with all invalid lines raises RuntimeError"""
+    """Test that file with all invalid lines raises after logging"""
     stat_file = tmp_path / "memory.stat"
     stat_content = """invalid line format
 field1 not_a_number
 single_field
 """
     stat_file.write_text(stat_content, encoding="utf-8")
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
-    with pytest.raises(RuntimeError, match="parsing produced no valid entries"):
+    # Should raise ValueError from _parse_cgroup_stat after logging
+    with pytest.raises(ValueError):
         mon._read_cgroup_breakdown()
 
 
@@ -303,7 +248,7 @@ def test_read_cgroup_breakdown_missing_core_metrics(
 slab 25000000
 """
     stat_file.write_text(stat_content, encoding="utf-8")
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     logger = get_logger()
     buf = StringIO()
@@ -359,19 +304,24 @@ def test_get_worker_processes_with_workers(monkeypatch: pytest.MonkeyPatch) -> N
     assert workers[1].rss_bytes == 75 * 1024 * 1024
 
 
-def test_get_worker_processes_lookup_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test lines 172-176: psutil.Process raises OSError"""
+def test_get_worker_processes_lookup_failure_raises_after_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that psutil.Process raises OSError after logging"""
 
     def _proc_factory(pid: int) -> None:
         raise OSError("Process not found")
 
     monkeypatch.setattr("handwriting_ai.monitoring.psutil.Process", _proc_factory)
-    workers = mon._get_worker_processes(100)
-    assert workers == ()
+    # Should raise after logging
+    with pytest.raises(OSError, match="Process not found"):
+        mon._get_worker_processes(100)
 
 
-def test_get_worker_processes_child_memory_failure(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Test lines 185-189: child.memory_info() raises exception"""
+def test_get_worker_processes_child_memory_failure_raises_after_logging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Test that child.memory_info() raises exception after logging"""
 
     class _FailingProcess:
         pid = 101
@@ -386,8 +336,9 @@ def test_get_worker_processes_child_memory_failure(monkeypatch: pytest.MonkeyPat
         return _FailingProcess()
 
     monkeypatch.setattr("handwriting_ai.monitoring.psutil.Process", _proc_factory)
-    workers = mon._get_worker_processes(100)
-    assert workers == ()
+    # Should raise after logging
+    with pytest.raises(OSError, match="Access denied"):
+        mon._get_worker_processes(100)
 
 
 def test_get_worker_processes_invalid_types(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -418,7 +369,7 @@ def test_get_worker_processes_invalid_types(monkeypatch: pytest.MonkeyPatch) -> 
 
 
 def test_cgroup_monitor_get_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    # Set up cgroup v2 files
+    # Set up cgroup files
     current_file = tmp_path / "memory.current"
     max_file = tmp_path / "memory.max"
     stat_file = tmp_path / "memory.stat"
@@ -430,9 +381,9 @@ def test_cgroup_monitor_get_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: 
         encoding="utf-8",
     )
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     # Mock psutil for main process and workers
     child1 = _DummyProcess(pid=101, rss=50 * 1024 * 1024)
@@ -464,8 +415,8 @@ def test_cgroup_monitor_check_pressure(monkeypatch: pytest.MonkeyPatch, tmp_path
     current_file.write_text("950000000", encoding="utf-8")
     max_file.write_text("1000000000", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
 
     monitor = mon.CgroupMemoryMonitor()
     assert monitor.check_pressure(threshold_percent=90.0) is True
@@ -482,9 +433,9 @@ def test_cgroup_monitor_log_snapshot(monkeypatch: pytest.MonkeyPatch, tmp_path: 
     max_file.write_text("200000000", encoding="utf-8")
     stat_file.write_text("anon 10000000\nfile 20000000\nkernel 5000000\nslab 2000000\n")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_STAT", stat_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat_file)
 
     parent = _DummyProcess(pid=100, rss=50 * 1024 * 1024, children=[])
 
@@ -566,32 +517,19 @@ def test_system_monitor_check_pressure(monkeypatch: pytest.MonkeyPatch) -> None:
 # Test module-level functions and detection
 
 
-def test_detect_cgroups_available_v2(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_detect_cgroups_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     current_file = tmp_path / "memory.current"
     current_file.write_text("1000", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-
-    assert mon._detect_cgroups_available() is True
-
-
-def test_detect_cgroups_available_v1(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    usage_file = tmp_path / "memory.usage_in_bytes"
-    usage_file.write_text("1000", encoding="utf-8")
-
-    v2_current = tmp_path / "v2_current"
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", usage_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
 
     assert mon._detect_cgroups_available() is True
 
 
 def test_detect_cgroups_not_available(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    v2_current = tmp_path / "v2_current"
-    v1_usage = tmp_path / "v1_usage"
+    current = tmp_path / "current"
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", v1_usage)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current)
 
     assert mon._detect_cgroups_available() is False
 
@@ -603,8 +541,8 @@ def test_log_system_info_container(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     current_file.write_text("500000000", encoding="utf-8")
     max_file.write_text("1000000000", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_MAX", max_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_MAX", max_file)
 
     def _cpu_count(logical: bool | None = True) -> int:
         return 8 if logical else 4
@@ -628,24 +566,19 @@ def test_log_system_info_container(monkeypatch: pytest.MonkeyPatch, tmp_path: Pa
     assert "cgroup_mem_limit_mb=" in out
 
 
-def test_log_system_info_non_container(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_log_system_info_non_container_raises_when_vm_fails(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     # Non-container mode: no cgroup files
-    v2_current = tmp_path / "v2_current"
-    v1_usage = tmp_path / "v1_usage"
+    current = tmp_path / "current"
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", v1_usage)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current)
 
     def _cpu_count(logical: bool | None = True) -> int:
         return 8 if logical else 4
 
     def _vm() -> _DummyVM:
-        return _DummyVM(
-            total=16 * 1024 * 1024 * 1024,
-            available=8 * 1024 * 1024 * 1024,
-            used=8 * 1024 * 1024 * 1024,
-            percent=50.0,
-        )
+        raise RuntimeError("VM info failed")
 
     monkeypatch.setattr("handwriting_ai.monitoring.psutil.cpu_count", _cpu_count)
     monkeypatch.setattr("handwriting_ai.monitoring.psutil.virtual_memory", _vm)
@@ -656,23 +589,19 @@ def test_log_system_info_non_container(monkeypatch: pytest.MonkeyPatch, tmp_path
     handler.setFormatter(_JsonFormatter())
     logger.addHandler(handler)
     try:
-        mon.log_system_info()
+        # Should raise when virtual_memory fails
+        with pytest.raises(RuntimeError, match="VM info failed"):
+            mon.log_system_info()
     finally:
         logger.removeHandler(handler)
 
-    out = buf.getvalue()
-    assert "system_info" in out
-    assert "cpu_logical=8" in out
-    assert "cpu_physical=4" in out
-    assert "system_mem_total_mb=" in out
-
 
 def test_create_monitor_cgroup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    """Test line 326: _create_monitor returns CgroupMemoryMonitor"""
+    """Test _create_monitor returns CgroupMemoryMonitor"""
     current_file = tmp_path / "memory.current"
     current_file.write_text("1000", encoding="utf-8")
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", current_file)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current_file)
 
     monitor = mon._create_monitor()
     assert isinstance(monitor, mon.CgroupMemoryMonitor)
@@ -680,11 +609,9 @@ def test_create_monitor_cgroup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) 
 
 def test_create_monitor_system(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     """Test _create_monitor returns SystemMemoryMonitor"""
-    v2_current = tmp_path / "v2_current"
-    v1_usage = tmp_path / "v1_usage"
+    current = tmp_path / "current"
 
-    monkeypatch.setattr(mon, "_CGROUP_V2_MEM_CURRENT", v2_current)
-    monkeypatch.setattr(mon, "_CGROUP_V1_MEM_USAGE", v1_usage)
+    monkeypatch.setattr(mon, "_CGROUP_MEM_CURRENT", current)
 
     def _vm() -> _DummyVM:
         return _DummyVM(
