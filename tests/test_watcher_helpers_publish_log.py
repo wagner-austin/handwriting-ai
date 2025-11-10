@@ -103,7 +103,7 @@ class _Reg:
 
 def test_log_registry_processing_branches() -> None:
     fw = FWatcher("redis://", "digits", "digits:events", ports=_ports())
-    logger = logging.getLogger("handwriting_ai.testhelpers")
+    logger = logging.getLogger("handwriting_ai")
     captured: list[logging.LogRecord] = []
 
     class _H(logging.Handler):
@@ -111,6 +111,7 @@ def test_log_registry_processing_branches() -> None:
             captured.append(record)
 
     h = _H()
+    h.setLevel(logging.INFO)
     logger.addHandler(h)
     try:
         fw._log_registry_processing(logger, "failed", [])
