@@ -5,6 +5,8 @@ from dataclasses import dataclass
 
 from handwriting_ai.monitoring import check_memory_pressure, get_memory_snapshot
 
+from .memory_diagnostics import record_batch_memory
+
 
 @dataclass(frozen=True)
 class MemoryGuardConfig:
@@ -43,6 +45,8 @@ def on_batch_check() -> bool:
     if not _cfg.enabled:
         return False
     snap = get_memory_snapshot()
+    # Track diagnostics using the already captured snapshot to avoid duplicate sampling
+    record_batch_memory(snapshot=snap)
     pct = snap.cgroup_usage.percent
     usage_mb = snap.cgroup_usage.usage_bytes // (1024 * 1024)
     limit_mb = snap.cgroup_usage.limit_bytes // (1024 * 1024)
