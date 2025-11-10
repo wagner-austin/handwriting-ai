@@ -16,6 +16,14 @@ from handwriting_ai.training.resources import ResourceLimits
 from handwriting_ai.training.runtime import EffectiveConfig
 
 
+@pytest.fixture(autouse=True)
+def _mock_monitoring(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Mock monitoring functions that fail on non-container systems."""
+    import handwriting_ai.training.mnist_train as mt
+
+    monkeypatch.setattr(mt, "log_system_info", lambda: None, raising=False)
+
+
 class _TinyBase(Dataset[tuple[Image.Image, int]]):
     def __init__(self, n: int = 4) -> None:
         self._n = n
