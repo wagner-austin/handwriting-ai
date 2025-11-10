@@ -137,9 +137,11 @@ def _apply_digits_retention_from_env(d: DigitsConfig) -> DigitsConfig:
         return d
     try:
         val = int(rk)
-    except ValueError:
-        logging.getLogger("handwriting_ai").info("invalid_digits_retention_keep_runs")
-        return d
+    except ValueError as exc:
+        logging.getLogger("handwriting_ai").warning(
+            "invalid_digits_retention_keep_runs error=%s", exc
+        )
+        raise
     return replace(d, retention_keep_runs=max(0, val))
 
 
