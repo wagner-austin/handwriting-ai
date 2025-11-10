@@ -31,11 +31,13 @@ def _get_int(d: dict[str, object], key: str, default: int) -> int:
     if isinstance(v, str):
         try:
             return int(v)
-        except ValueError:
+        except ValueError as exc:
             import logging as _logging
 
-            _logging.getLogger("handwriting_ai").debug("calib_parse_int_failed")
-            return default
+            _logging.getLogger("handwriting_ai").error(
+                "calib_parse_int_failed key=%s value=%s error=%s", key, v, exc
+            )
+            raise
     return default
 
 
@@ -48,37 +50,43 @@ def _get_float(d: dict[str, object], key: str, default: float) -> float:
     if isinstance(v, str):
         try:
             return float(v)
-        except ValueError:
+        except ValueError as exc:
             import logging as _logging
 
-            _logging.getLogger("handwriting_ai").debug("calib_parse_float_failed")
-            return default
+            _logging.getLogger("handwriting_ai").error(
+                "calib_parse_float_failed key=%s value=%s error=%s", key, v, exc
+            )
+            raise
     return default
 
 
 def _read_cache(path: Path) -> tuple[CalibrationSignature, CalibrationResult, float] | None:
     try:
         raw = path.read_text(encoding="utf-8")
-    except OSError:
+    except OSError as exc:
         import logging as _logging
 
-        _logging.getLogger("handwriting_ai").debug("calib_cache_read_failed")
-        return None
+        _logging.getLogger("handwriting_ai").error(
+            "calib_cache_read_failed path=%s error=%s", path, exc
+        )
+        raise
     try:
         parsed: object = json.loads(raw)
-    except json.JSONDecodeError:
+    except json.JSONDecodeError as exc:
         import logging as _logging
 
-        _logging.getLogger("handwriting_ai").debug("calib_cache_decode_failed")
-        return None
+        _logging.getLogger("handwriting_ai").error(
+            "calib_cache_decode_failed path=%s error=%s", path, exc
+        )
+        raise
     root = _as_obj_dict(parsed)
     if root is None:
-        return None
+        raise ValueError("calibration cache root must be an object")
     sig_raw = _as_obj_dict(root.get("signature"))
     res_raw = _as_obj_dict(root.get("result"))
     ts_raw = root.get("created_at_ts")
     if sig_raw is None or res_raw is None or not isinstance(ts_raw, (int | float)):
-        return None
+        raise ValueError("calibration cache missing required fields")
     mem_v = sig_raw.get("mem_bytes")
     mem_parsed = _get_int(sig_raw, "mem_bytes", 0) if mem_v is not None else None
     sig = CalibrationSignature(
