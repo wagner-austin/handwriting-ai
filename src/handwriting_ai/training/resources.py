@@ -16,53 +16,38 @@ class ResourceLimits:
     max_batch_size: int | None
 
 
-_CGROUP_V2_CPU_MAX: Final[Path] = Path("/sys/fs/cgroup/cpu.max")
-_CGROUP_V1_CFS_QUOTA: Final[Path] = Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
-_CGROUP_V1_CFS_PERIOD: Final[Path] = Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
-_CGROUP_V2_MEM_MAX: Final[Path] = Path("/sys/fs/cgroup/memory.max")
-_CGROUP_V1_MEM_LIMIT: Final[Path] = Path("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+_CGROUP_CPU_MAX: Final[Path] = Path("/sys/fs/cgroup/cpu.max")
+_CGROUP_MEM_MAX: Final[Path] = Path("/sys/fs/cgroup/memory.max")
 
 
-def _read_text_file(path: Path) -> str | None:
-    try:
-        return path.read_text(encoding="utf-8").strip()
-    except OSError:
-        import logging as _logging
+def _read_text_file(path: Path) -> str:
+    """Strict text read for resource files.
 
-        _logging.getLogger("handwriting_ai").debug("resources_read_failed")
-        return None
+    Callers must check file existence before calling. All OSErrors are
+    propagated to ensure strong error signaling at the right layer.
+    """
+    return path.read_text(encoding="utf-8").strip()
 
 
 def _detect_cpu_cores() -> int:
-    cpu_max = _read_text_file(_CGROUP_V2_CPU_MAX)
+    cpu_max = _read_text_file(_CGROUP_CPU_MAX)
     if cpu_max and cpu_max != "max":
         parts = cpu_max.split()
         if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
             quota = int(parts[0])
-            period = int(parts[1]) or 100000
+            period = int(parts[1]) or 100_000
             if quota > 0 and period > 0:
                 return max(1, quota // period)
-    cfs_quota = _read_text_file(_CGROUP_V1_CFS_QUOTA)
-    cfs_period = _read_text_file(_CGROUP_V1_CFS_PERIOD)
-    if cfs_quota and cfs_period and cfs_quota.isdigit() and cfs_period.isdigit():
-        quota_us = int(cfs_quota)
-        period_us = int(cfs_period) or 100000
-        if quota_us > 0 and period_us > 0:
-            return max(1, quota_us // period_us)
     import os
 
     return max(1, os.cpu_count() or 1)
 
 
 def _detect_memory_limit_bytes() -> int | None:
-    mem_max = _read_text_file(_CGROUP_V2_MEM_MAX)
+    mem_max = _read_text_file(_CGROUP_MEM_MAX)
     if mem_max and mem_max.isdigit():
         val = int(mem_max)
         return None if val <= 0 else val
-    mem_v1 = _read_text_file(_CGROUP_V1_MEM_LIMIT)
-    if mem_v1 and mem_v1.isdigit():
-        val = int(mem_v1)
-        return val if val < (1 << 60) else None
     return None
 
 
@@ -109,8 +94,18 @@ def _compute_optimal_workers(cores: int, memory_bytes: int | None) -> int:
 
 
 def detect_resource_limits() -> ResourceLimits:
-    cpu_cores = _detect_cpu_cores()
-    mem_bytes = _detect_memory_limit_bytes()
+    # Existence-gated reads to avoid invalid I/O on non-container systems
+    has_cpu_cg = _CGROUP_CPU_MAX.exists()
+    has_mem_cg = _CGROUP_MEM_MAX.exists()
+
+    if has_cpu_cg:
+        cpu_cores = _detect_cpu_cores()
+    else:
+        import os as _os
+
+        cpu_cores = max(1, _os.cpu_count() or 1)
+
+    mem_bytes = _detect_memory_limit_bytes() if has_mem_cg else None
     optimal_threads = _compute_optimal_threads(cpu_cores)
     optimal_workers = _compute_optimal_workers(cpu_cores, mem_bytes)
     max_bs = compute_max_batch_size(mem_bytes)
