@@ -210,10 +210,13 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
                 )
                 bs_hi = mid - 1
         except (RuntimeError, MemoryError) as exc:
-            _logging.getLogger("handwriting_ai").info(
-                "calibration_backoff reason=exception exc=%s bs=%d", type(exc).__name__, mid
+            _logging.getLogger("handwriting_ai").error(
+                "calibration_backoff reason=exception exc=%s bs=%d error=%s",
+                type(exc).__name__,
+                mid,
+                exc,
             )
-            bs_hi = mid - 1
+            raise
         finally:
             _gc.collect()
 
