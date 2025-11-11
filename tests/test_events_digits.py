@@ -11,6 +11,7 @@ def test_encode_all_event_builders_cover_fields() -> None:
     s = ev.started(
         ctx,
         total_epochs=2,
+        queue="digits",
         cpu_cores=2,
         memory_mb=953,
         optimal_threads=2,
@@ -18,6 +19,7 @@ def test_encode_all_event_builders_cover_fields() -> None:
         max_batch_size=64,
         device="cpu",
         batch_size=32,
+        learning_rate=0.001,
         augment=False,
         aug_rotate=10.0,
         aug_translate=0.1,
@@ -75,9 +77,40 @@ def test_encode_all_event_builders_cover_fields() -> None:
     assert c["type"] == "digits.train.completed.v1"
     assert c["val_acc"] == 0.99
 
-    f = ev.failed(ctx, error_kind="user", message="bad")
+    f = ev.failed(ctx, error_kind="user", message="bad", queue="digits", status="failed")
     assert f["type"] == "digits.train.failed.v1"
     assert f["message"] == "bad"
+    assert f["queue"] == "digits"
+    assert f["status"] == "failed"
+
+    # Test with None queue
+    s_none_queue = ev.started(
+        ctx,
+        total_epochs=2,
+        queue=None,
+        cpu_cores=2,
+        memory_mb=953,
+        optimal_threads=2,
+        optimal_workers=0,
+        max_batch_size=64,
+        device="cpu",
+        batch_size=32,
+        learning_rate=0.001,
+        augment=False,
+        aug_rotate=10.0,
+        aug_translate=0.1,
+        noise_prob=0.0,
+        dots_prob=0.0,
+    )
+    assert s_none_queue["type"] == "digits.train.started.v1"
+    assert s_none_queue["queue"] is None
+
+    f_none_queue = ev.failed(
+        ctx, error_kind="system", message="error", queue=None, status="canceled"
+    )
+    assert f_none_queue["type"] == "digits.train.failed.v1"
+    assert f_none_queue["queue"] is None
+    assert f_none_queue["status"] == "canceled"
 
     # Encode coverage
     s_json = ev.encode_event(s)
