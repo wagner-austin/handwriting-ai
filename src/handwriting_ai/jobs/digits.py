@@ -7,6 +7,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Final, Literal, Protocol, TypedDict, runtime_checkable
 
+from rq import get_current_job
+
 from handwriting_ai.config import Settings
 from handwriting_ai.events import digits as ev
 from handwriting_ai.inference.manifest import ModelManifest
@@ -186,7 +188,6 @@ def _summarize_training_exception(exc: BaseException) -> str:
 def process_train_job(payload: dict[str, object]) -> None:
     typ = payload.get("type") if isinstance(payload, dict) else None
     if typ != "digits.train.v1":
-        _emit_failed(payload, "user", "invalid job type")
         raise ValueError("invalid job type")
 
     try:
@@ -204,8 +205,6 @@ def process_train_job(payload: dict[str, object]) -> None:
         }
     except (ValueError, TypeError) as exc:
         logging.getLogger("handwriting_ai").error("digits_job_invalid_payload error=%s", exc)
-        # Publish a versioned failed event before propagating
-        _emit_failed(payload, "user", f"Invalid payload: {exc}")
         raise
 
     ctx = _make_context()
@@ -223,9 +222,16 @@ def process_train_job(payload: dict[str, object]) -> None:
             if isinstance(_limits.memory_bytes, int)
             else None
         )
+        # Get current queue name from RQ job context
+        _current_job = get_current_job()
+        _queue_name: str | None = None
+        if _current_job is not None and _current_job.origin is not None:
+            _queue_name = str(_current_job.origin)
+
         _started_v1 = ev.started(
             _ctx,
             total_epochs=p["epochs"],
+            queue=_queue_name,
             cpu_cores=int(_limits.cpu_cores),
             memory_mb=_mem_mb,
             optimal_threads=int(_limits.optimal_threads),
@@ -233,6 +239,7 @@ def process_train_job(payload: dict[str, object]) -> None:
             max_batch_size=_limits.max_batch_size,
             device=cfg.device,
             batch_size=cfg.batch_size,
+            learning_rate=float(p["lr"]),
             augment=cfg.augment,
             aug_rotate=cfg.aug_rotate,
             aug_translate=cfg.aug_translate,
@@ -288,7 +295,9 @@ def process_train_job(payload: dict[str, object]) -> None:
         )
         raise
     except (OSError, RuntimeError, ValueError, TypeError) as exc:
-        _emit_failed(payload, "system", _summarize_training_exception(exc))
+        logging.getLogger("handwriting_ai").error(
+            "training_failed error=%s", _summarize_training_exception(exc)
+        )
         raise
     finally:
         # Ensure emitter cleared to avoid cross-job leakage in long-lived workers
@@ -455,38 +464,6 @@ def _as_float(v: object) -> float:
     if isinstance(v, str):
         return float(v)
     raise ValueError("invalid float")
-
-
-def _emit_failed(
-    payload: dict[str, object] | object, kind: Literal["user", "system"], msg: str
-) -> None:
-    ctx = _make_context()
-    req = ""
-    uid = 0
-    mid = ""
-    if isinstance(payload, dict):
-        req = str(payload.get("request_id", ""))
-        raw_uid = payload.get("user_id", None)
-        uid = raw_uid if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) else 0
-        mid = str(payload.get("model_id", ""))
-    elif isinstance(payload, _PayloadMapping):
-        # Dict-like; allow attribute errors or value errors to propagate
-        req = str(payload.get("request_id", ""))
-        raw_uid = payload.get("user_id", None)
-        uid = raw_uid if isinstance(raw_uid, int) and not isinstance(raw_uid, bool) else 0
-        mid = str(payload.get("model_id", ""))
-    # Versioned failed (no legacy fallback)
-    try:
-        if ctx.publisher is not None:
-            _f = ev.failed(
-                ev.Context(request_id=req, user_id=uid, model_id=mid, run_id=None),
-                error_kind=kind,
-                message=msg,
-            )
-            ctx.publisher.publish(ctx.channel, ev.encode_event(_f))
-    except (OSError, ValueError) as exc:
-        logging.getLogger("handwriting_ai").error("digits_event_publish_failed error=%s", exc)
-        raise
 
 
 def _emit_interrupted(payload: dict[str, object] | object, run_id: str | None, path: str) -> None:
