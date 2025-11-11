@@ -192,6 +192,20 @@ def test_emit_result_file(tmp_path: Path) -> None:
     assert "ok=1" in txt and "batch_size=2" in txt
 
 
+def test_runner_wait_for_outcome_dead_runtime(tmp_path: Path) -> None:
+    class _DeadProc(BaseProcess):
+        def is_alive(self) -> bool:
+            return False
+
+        @property
+        def exitcode(self) -> int:
+            return 1  # non-oom, non-timeout code
+
+    r = SubprocessRunner()
+    out = r._wait_for_outcome(_DeadProc(), str(tmp_path / "missing.txt"), start=0.0, timeout_s=0.1)
+    assert out.error is not None and out.error.kind == "runtime"
+
+
 def test_try_read_result_unknown_ok(tmp_path: Path) -> None:
     p = tmp_path / "unknown.txt"
     p.write_text("ok=2\nfoo=bar\n", encoding="utf-8")
