@@ -121,6 +121,8 @@ def read_checkpoint(path: Path) -> CalibrationCheckpoint | None:
 
 def write_checkpoint(path: Path, ckpt: CalibrationCheckpoint) -> None:
     payload = json.dumps(_encode_checkpoint(ckpt), ensure_ascii=False, separators=(",", ":"))
+    # Ensure parent directory exists for CI and runtime environments
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(payload, encoding="utf-8")
 
 

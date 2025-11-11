@@ -79,3 +79,16 @@ def test_checkpoint_decode_nondict_raises(tmp_path: Path) -> None:
     p.write_text("[]", encoding="utf-8")
     with pytest.raises(ValueError):
         read_checkpoint(p)
+
+
+def test_checkpoint_write_creates_parent_dirs(tmp_path: Path) -> None:
+    # Use nested path that doesn't exist
+    nested = tmp_path / "a" / "b" / "ck.json"
+    res = CalibrationResult(1, None, 0, 1, 2.0, 3.0)
+    ck = CalibrationCheckpoint(
+        stage=CalibrationStage.A, index=0, results=[res], shortlist=None, seed=None
+    )
+    write_checkpoint(nested, ck)
+    assert nested.exists()
+    ck2 = read_checkpoint(nested)
+    assert ck2 is not None and ck2.index == 0 and len(ck2.results) == 1
