@@ -111,8 +111,23 @@ def calibrate_input_pipeline(
     log.info("calibration_stage_b_start shortlist=%d samples=%d", len(shortlist), samples_refine)
     refined: list[CalibrationResult] = orch.run_stage_b(ds, shortlist, samples_refine)
     log.info("calibration_stage_b_complete measured=%d", len(refined))
-    refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
-    best = refined[0]
+    if len(refined) == 0:
+        # Robust fallback: choose conservative defaults to avoid failing training pipeline
+        log.error(
+            "calibration_failed_all_candidates using_fallback threads=1 workers=0 bs=%d",
+            max(1, int(requested_batch_size)),
+        )
+        best = CalibrationResult(
+            intra_threads=1,
+            interop_threads=None,
+            num_workers=0,
+            batch_size=max(1, int(requested_batch_size)),
+            samples_per_sec=0.0,
+            p95_ms=0.0,
+        )
+    else:
+        refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
+        best = refined[0]
 
     # Emit a concise calibration report (top 3 + chosen)
     def _fmt(r: CalibrationResult) -> str:

@@ -115,7 +115,6 @@ class SubprocessRunner:
         proc = self._ctx.Process(
             target=_child_entry,
             args=(out_path, ds, cand, int(samples), float(budget.abort_pct)),
-            daemon=True,
         )
         start = _time.perf_counter()
         proc.start()
