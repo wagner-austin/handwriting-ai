@@ -26,6 +26,7 @@ from .signature import make_signature as _make_signature
 
 class CalibrationError(RuntimeError):
     """Raised when calibration cannot produce any viable candidate results."""
+
     pass
 
 
