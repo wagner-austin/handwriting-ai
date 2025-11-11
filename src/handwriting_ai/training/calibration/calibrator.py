@@ -24,6 +24,11 @@ from .runner import BudgetConfig, SubprocessRunner
 from .signature import make_signature as _make_signature
 
 
+class CalibrationError(RuntimeError):
+    """Raised when calibration cannot produce any viable candidate results."""
+    pass
+
+
 def _result_to_effective(res: CalibrationResult) -> EffectiveConfig:
     return EffectiveConfig(
         intra_threads=res.intra_threads,
@@ -104,6 +109,9 @@ def calibrate_input_pipeline(
     )
     stage_a: list[CalibrationResult] = orch.run_stage_a(ds, cands, samples)
     log.info("calibration_stage_a_complete measured=%d", len(stage_a))
+    if len(stage_a) == 0:
+        log.error("calibration_failed_stage_a_no_results")
+        raise CalibrationError("calibration failed: no results in stage A")
     stage_a.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
     shortlist = stage_a[: min(3, len(stage_a))]
 
@@ -112,22 +120,10 @@ def calibrate_input_pipeline(
     refined: list[CalibrationResult] = orch.run_stage_b(ds, shortlist, samples_refine)
     log.info("calibration_stage_b_complete measured=%d", len(refined))
     if len(refined) == 0:
-        # Robust fallback: choose conservative defaults to avoid failing training pipeline
-        log.error(
-            "calibration_failed_all_candidates using_fallback threads=1 workers=0 bs=%d",
-            max(1, int(requested_batch_size)),
-        )
-        best = CalibrationResult(
-            intra_threads=1,
-            interop_threads=None,
-            num_workers=0,
-            batch_size=max(1, int(requested_batch_size)),
-            samples_per_sec=0.0,
-            p95_ms=0.0,
-        )
-    else:
-        refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
-        best = refined[0]
+        log.error("calibration_failed_stage_b_no_results")
+        raise CalibrationError("calibration failed: no results in stage B")
+    refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
+    best = refined[0]
 
     # Emit a concise calibration report (top 3 + chosen)
     def _fmt(r: CalibrationResult) -> str:
