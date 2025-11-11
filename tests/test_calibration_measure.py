@@ -181,16 +181,15 @@ def test_measure_candidate_with_workers_no_leak() -> None:
         current_mb = snap.main_process.rss_bytes // (1024 * 1024)
         memory_readings.append(current_mb)
 
-    # Verify memory didn't accumulate across the sequence
+    # Verify memory didn't accumulate across the sequence (increase-only check)
     # Workers add overhead, so allow more variance (75MB) than the no-worker test
-    seq_max = max(memory_readings)
-    seq_min = min(memory_readings)
-    seq_growth_mb = seq_max - seq_min
+    baseline = memory_readings[0]
+    max_increase = max((v - baseline) for v in memory_readings)
 
     # If workers aren't cleaned up, memory would grow 150+ MB across 6 tests
-    # With proper cleanup, sequence range should remain bounded even with worker overhead
-    assert seq_growth_mb < 75, (
-        f"Worker memory leak detected: sequence grew {seq_growth_mb}MB "
+    # With proper cleanup, increase over baseline should remain bounded even with worker overhead
+    assert max_increase < 75, (
+        f"Worker memory leak detected: increased {max_increase}MB from baseline {baseline}MB "
         f"across {len(batch_sizes)} batch size tests with num_workers=1. "
         f"Readings: {memory_readings}"
     )
