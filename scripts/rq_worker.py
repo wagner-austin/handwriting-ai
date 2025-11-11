@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import handwriting_ai.jobs.digits as dj
-from handwriting_ai.events import digits as _ev
 from handwriting_ai.logging import init_logging
 from handwriting_ai.monitoring import log_system_info
 from scripts.worker import _make_publisher_from_env, _real_run_training
@@ -69,48 +68,6 @@ def _start_worker(s: _RqSettings) -> int:
     q_factory = _rq.Queue
     worker_factory = _rq.Worker
 
-    # Exception handler to emit a failure event for any job error.
-    # Signature matches RQ's expected callback: (job, exc_type, exc_value, traceback)
-    def _on_rq_job_failure(
-        job: object,
-        exc_type: type[BaseException] | None,
-        exc_value: BaseException | None,
-        _tb: object | None,
-    ) -> None:
-        try:
-            payload: dict[str, object] | None = None
-            args_obj = getattr(job, "args", None)
-            if (
-                isinstance(args_obj, list | tuple)
-                and len(args_obj) > 0
-                and isinstance(args_obj[0], dict)
-            ):
-                payload = args_obj[0]
-            request_id = str(payload.get("request_id") if payload else "")
-            user_id_obj = payload.get("user_id") if payload else None
-            user_id = int(user_id_obj) if isinstance(user_id_obj, int) else 0
-            model_id = str(payload.get("model_id") if payload else "")
-            err_name = exc_type.__name__ if exc_type is not None else "Error"
-            err_msg = str(exc_value) if exc_value is not None else "job failed"
-            msg = f"{err_name}: {err_msg}" if err_msg else err_name
-            pub = _make_publisher_from_env()
-            ch = os.getenv("DIGITS_EVENTS_CHANNEL") or "digits:events"
-            if pub is not None:
-                evt = _ev.failed(
-                    _ev.Context(
-                        request_id=request_id,
-                        user_id=int(user_id),
-                        model_id=model_id,
-                        run_id=None,
-                    ),
-                    error_kind="system",
-                    message=msg,
-                )
-                pub.publish(ch, _ev.encode_event(evt))
-        except (OSError, RuntimeError, ValueError, TypeError):
-            # Never let the exception handler crash the worker loop
-            logging.getLogger("handwriting_ai").info("rq_worker_emit_failed_event_error")
-
     push_conn = getattr(_rq, "push_connection", None)
     pop_conn = getattr(_rq, "pop_connection", None)
     if callable(push_conn):
@@ -118,8 +75,8 @@ def _start_worker(s: _RqSettings) -> int:
     try:
         # RQ 2.x requires explicit connection on Queue/Worker
         q = q_factory(s.queue_name, connection=conn)
-        # Strict: require modern RQ that accepts exception_handlers; no legacy fallbacks
-        w = worker_factory(queues=[q], connection=conn, exception_handlers=[_on_rq_job_failure])
+        # Use RQ's default exception handler to add failed jobs to FailedJobRegistry
+        w = worker_factory(queues=[q], connection=conn)
         # Blocks until interrupted; returns boolean success
         success = bool(w.work())
         return 0 if success else 1
