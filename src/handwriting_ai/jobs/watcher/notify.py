@@ -135,6 +135,8 @@ class NotificationWatcher:
                 ),
                 error_kind="system",
                 message=message,
+                queue=queue,
+                status="failed",
             )
             self._publish_and_mark(evt, key, reg="failed", queue=queue)
 
@@ -166,6 +168,8 @@ class NotificationWatcher:
                 ),
                 error_kind="user",
                 message="Job canceled",
+                queue=queue,
+                status="canceled",
             )
             self._publish_and_mark(evt, key, reg="canceled", queue=queue)
 
