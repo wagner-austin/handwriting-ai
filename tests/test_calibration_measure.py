@@ -109,10 +109,8 @@ def test_measure_candidate_multiple_batch_sizes_no_leak() -> None:
     base = _FakeMNIST(256)
     ds = PreprocessDataset(base, _DummyCfg(batch_size=64))
 
-    # Measure initial memory baseline (unused in range-based check; retained for context)
     _ = get_memory_snapshot()
 
-    # Test multiple batch sizes sequentially (simulating binary search)
     batch_sizes = [64, 32, 16, 8, 4, 2]
     memory_readings: list[int] = []
 
@@ -120,20 +118,17 @@ def test_measure_candidate_multiple_batch_sizes_no_leak() -> None:
         cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=bs)
         _measure._measure_candidate(ds, cand, samples=1)
 
-        # Measure memory after each test
         snap = get_memory_snapshot()
         current_mb = snap.main_process.rss_bytes // (1024 * 1024)
         memory_readings.append(current_mb)
 
-    # Verify memory didn't accumulate significantly across the sequence itself
-    # Allow some variance (50MB) for legitimate allocations, but not unbounded growth
-    seq_max = max(memory_readings)
-    seq_min = min(memory_readings)
-    seq_growth_mb = seq_max - seq_min
+    # Verify memory didn't increase significantly relative to baseline
+    baseline = memory_readings[0]
+    max_increase = max(v - baseline for v in memory_readings)
 
-    # If a leak exists across repeated calibrations, the sequence range would exceed 50MB
-    assert seq_growth_mb < 50, (
-        f"Memory accumulation detected across sequence: grew {seq_growth_mb}MB "
+    # If a leak exists across repeated calibrations, the increase over baseline would exceed 50MB
+    assert max_increase < 50, (
+        f"Memory accumulation detected: increased {max_increase}MB from baseline {baseline}MB "
         f"within readings {memory_readings}"
     )
 
