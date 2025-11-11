@@ -493,9 +493,11 @@ def test_system_monitor_get_snapshot(monkeypatch: pytest.MonkeyPatch) -> None:
     assert snap.cgroup_usage.usage_bytes == 8 * 1024 * 1024 * 1024
     assert snap.cgroup_usage.limit_bytes == 16 * 1024 * 1024 * 1024
     assert abs(snap.cgroup_usage.percent - 50.0) < 0.01
-    # Breakdown should be zeros for system monitor
-    assert snap.cgroup_breakdown.anon_bytes == 0
-    assert snap.cgroup_breakdown.file_bytes == 0
+    # Breakdown: anon approximated by main RSS, file from buffers+cached (0 if not present)
+    assert snap.cgroup_breakdown.anon_bytes == 100 * 1024 * 1024
+    assert snap.cgroup_breakdown.file_bytes == 0  # No buffers/cached in _DummyVM
+    assert snap.cgroup_breakdown.kernel_bytes == 0
+    assert snap.cgroup_breakdown.slab_bytes == 0
 
 
 def test_system_monitor_check_pressure(monkeypatch: pytest.MonkeyPatch) -> None:

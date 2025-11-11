@@ -303,12 +303,20 @@ class SystemMemoryMonitor:
             percent=percent,
         )
 
-        # Create minimal breakdown (zeros for cgroup-specific metrics)
+        # Emulate cgroup breakdown using psutil.virtual_memory()
+        # In non-cgroup environments, map system-wide memory stats to approximate categories:
+        # - anon: use main process RSS (heap allocations)
+        # - file: use system-wide buffers/cached (file-backed pages)
+        # - kernel/slab: leave as 0 (no equivalent in psutil)
+        anon_approx = main_rss
+        # psutil.virtual_memory() provides buffers + cached as file-backed memory
+        file_approx = int(getattr(vm, "buffers", 0) + getattr(vm, "cached", 0))
+
         cgroup_breakdown = CgroupMemoryBreakdown(
-            anon_bytes=0,
-            file_bytes=0,
-            kernel_bytes=0,
-            slab_bytes=0,
+            anon_bytes=anon_approx,
+            file_bytes=file_approx,
+            kernel_bytes=0,  # Not available via psutil
+            slab_bytes=0,  # Not available via psutil
         )
 
         return MemorySnapshot(

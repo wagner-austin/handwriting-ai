@@ -194,18 +194,32 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
     best_sps: float = 0.0
     best_p95: float = 0.0
 
-    # Log initial state before binary search
+    # Log initial state before binary search with full memory breakdown
     snap_start = get_memory_snapshot()
     mem_start_pct = float(snap_start.cgroup_usage.percent)
-    mem_start_mb = snap_start.main_process.rss_bytes // (1024 * 1024)
+    main_start_mb = snap_start.main_process.rss_bytes // (1024 * 1024)
+    workers_start_mb = sum(w.rss_bytes for w in snap_start.workers) // (1024 * 1024)
+    cgroup_start_mb = snap_start.cgroup_usage.usage_bytes // (1024 * 1024)
+    anon_start_mb = snap_start.cgroup_breakdown.anon_bytes // (1024 * 1024)
+    file_start_mb = snap_start.cgroup_breakdown.file_bytes // (1024 * 1024)
+    kernel_start_mb = snap_start.cgroup_breakdown.kernel_bytes // (1024 * 1024)
+    slab_start_mb = snap_start.cgroup_breakdown.slab_bytes // (1024 * 1024)
     _logging.getLogger("handwriting_ai").info(
-        "calibration_candidate_start threads=%d workers=%d bs_range=[%d,%d] mem_pct=%.1f mem_mb=%d",
+        "calibration_candidate_start threads=%d workers=%d bs_range=[%d,%d] "
+        "mem_pct=%.1f cgroup_mb=%d main_rss_mb=%d workers_rss_mb=%d "
+        "anon_mb=%d file_mb=%d kernel_mb=%d slab_mb=%d",
         cand.intra_threads,
         cand.num_workers,
         bs_lo,
         bs_hi,
         mem_start_pct,
-        mem_start_mb,
+        cgroup_start_mb,
+        main_start_mb,
+        workers_start_mb,
+        anon_start_mb,
+        file_start_mb,
+        kernel_start_mb,
+        slab_start_mb,
     )
 
     while bs_lo <= bs_hi:
@@ -256,25 +270,55 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
             if loader is not None:
                 del loader
             _gc.collect()
-            # Log memory after cleanup to diagnose leaks
+            # Log memory after cleanup with full breakdown to diagnose leaks
             snap_cleanup = get_memory_snapshot()
             mem_cleanup_pct = float(snap_cleanup.cgroup_usage.percent)
-            mem_cleanup_mb = snap_cleanup.main_process.rss_bytes // (1024 * 1024)
+            main_cleanup_mb = snap_cleanup.main_process.rss_bytes // (1024 * 1024)
+            workers_cleanup_mb = sum(w.rss_bytes for w in snap_cleanup.workers) // (1024 * 1024)
+            cgroup_cleanup_mb = snap_cleanup.cgroup_usage.usage_bytes // (1024 * 1024)
+            anon_cleanup_mb = snap_cleanup.cgroup_breakdown.anon_bytes // (1024 * 1024)
+            file_cleanup_mb = snap_cleanup.cgroup_breakdown.file_bytes // (1024 * 1024)
+            kernel_cleanup_mb = snap_cleanup.cgroup_breakdown.kernel_bytes // (1024 * 1024)
+            slab_cleanup_mb = snap_cleanup.cgroup_breakdown.slab_bytes // (1024 * 1024)
             _logging.getLogger("handwriting_ai").info(
-                "calibration_cleanup_complete bs=%d mem_pct=%.1f mem_mb=%d",
+                "calibration_cleanup_complete bs=%d mem_pct=%.1f "
+                "cgroup_mb=%d main_rss_mb=%d workers_rss_mb=%d "
+                "anon_mb=%d file_mb=%d kernel_mb=%d slab_mb=%d",
                 mid,
                 mem_cleanup_pct,
-                mem_cleanup_mb,
+                cgroup_cleanup_mb,
+                main_cleanup_mb,
+                workers_cleanup_mb,
+                anon_cleanup_mb,
+                file_cleanup_mb,
+                kernel_cleanup_mb,
+                slab_cleanup_mb,
             )
 
-    # Log final result
+    # Log final result with full memory breakdown
     snap_end = get_memory_snapshot()
     mem_end_pct = float(snap_end.cgroup_usage.percent)
+    main_end_mb = snap_end.main_process.rss_bytes // (1024 * 1024)
+    workers_end_mb = sum(w.rss_bytes for w in snap_end.workers) // (1024 * 1024)
+    cgroup_end_mb = snap_end.cgroup_usage.usage_bytes // (1024 * 1024)
+    anon_end_mb = snap_end.cgroup_breakdown.anon_bytes // (1024 * 1024)
+    file_end_mb = snap_end.cgroup_breakdown.file_bytes // (1024 * 1024)
+    kernel_end_mb = snap_end.cgroup_breakdown.kernel_bytes // (1024 * 1024)
+    slab_end_mb = snap_end.cgroup_breakdown.slab_bytes // (1024 * 1024)
     _logging.getLogger("handwriting_ai").info(
-        "calibration_candidate_complete best_bs=%d sps=%.2f mem_pct=%.1f",
+        "calibration_candidate_complete best_bs=%d sps=%.2f mem_pct=%.1f "
+        "cgroup_mb=%d main_rss_mb=%d workers_rss_mb=%d "
+        "anon_mb=%d file_mb=%d kernel_mb=%d slab_mb=%d",
         best_bs,
         best_sps,
         mem_end_pct,
+        cgroup_end_mb,
+        main_end_mb,
+        workers_end_mb,
+        anon_end_mb,
+        file_end_mb,
+        kernel_end_mb,
+        slab_end_mb,
     )
 
     return CalibrationResult(
