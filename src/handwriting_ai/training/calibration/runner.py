@@ -79,8 +79,21 @@ def _child_entry(
     samples: int,
     abort_pct: float,
 ) -> None:
+    import logging as _logging
+    import time as _time
+
+    log = _logging.getLogger("handwriting_ai")
+    start_entry = _time.perf_counter()
+    log.info(
+        "calibration_child_started pid=%d threads=%d workers=%d bs=%d",
+        _os.getpid(),
+        cand.intra_threads,
+        cand.num_workers,
+        cand.batch_size,
+    )
     try:
         # Configure memory guard inside the child for calibration attempts.
+        start_guard = _time.perf_counter()
         set_memory_guard_config(
             MemoryGuardConfig(
                 enabled=True,
@@ -88,9 +101,19 @@ def _child_entry(
                 required_consecutive=3,
             )
         )
+        guard_elapsed = _time.perf_counter() - start_guard
+        log.info("calibration_child_guard_set elapsed_ms=%.1f", guard_elapsed * 1000)
+
+        start_measure = _time.perf_counter()
         res = _measure_candidate(ds, cand, samples)
+        measure_elapsed = _time.perf_counter() - start_measure
+        log.info("calibration_child_measure_complete elapsed_s=%.1f", measure_elapsed)
+
         # Manual KV encoding of result (executes in child process)
         _emit_result_file(out_path, res)  # pragma: no cover (subprocess)
+
+        total_elapsed = _time.perf_counter() - start_entry
+        log.info("calibration_child_complete total_s=%.1f", total_elapsed)
     finally:
         # Ensure prompt teardown
         _gc.collect()
@@ -108,16 +131,29 @@ class SubprocessRunner:
         samples: int,
         budget: BudgetConfig,
     ) -> CandidateOutcome:
+        import logging as _logging
         import tempfile as _tmp
 
+        log = _logging.getLogger("handwriting_ai")
         out_dir = _tmp.mkdtemp(prefix="calib_child_")
         out_path = _os.path.join(out_dir, "result.txt")
+
+        spawn_start = _time.perf_counter()
         proc = self._ctx.Process(
             target=_child_entry,
             args=(out_path, ds, cand, int(samples), float(budget.abort_pct)),
         )
         start = _time.perf_counter()
         proc.start()
+        spawn_elapsed = _time.perf_counter() - spawn_start
+        log.info(
+            "calibration_parent_spawned threads=%d workers=%d bs=%d spawn_ms=%.1f timeout_s=%.1f",
+            cand.intra_threads,
+            cand.num_workers,
+            cand.batch_size,
+            spawn_elapsed * 1000,
+            float(budget.timeout_s),
+        )
 
         try:
             return self._wait_for_outcome(proc, out_path, start, float(budget.timeout_s))
