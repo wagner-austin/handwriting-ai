@@ -376,6 +376,8 @@ def test_publish_and_mark_handles_store_none_and_pub_none() -> None:
         ev.Context(request_id="r", user_id=1, model_id="m", run_id=None),
         error_kind="system",
         message="x",
+        queue="digits",
+        status="failed",
     )
     # Should not raise
     w1._publish_and_mark(evt, "jid", reg="failed", queue="digits")
