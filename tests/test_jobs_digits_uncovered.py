@@ -144,30 +144,9 @@ def test_progress_emitter_emit_epoch_raises_on_os_error() -> None:
         em.emit_epoch(epoch=1, total_epochs=1, train_loss=0.1, val_acc=0.2, time_s=0.1)
 
 
-def test_emit_failed_with_payload_mapping_branch(monkeypatch: pytest.MonkeyPatch) -> None:
-    class _Pub:
-        def __init__(self) -> None:
-            self.sent: list[tuple[str, str]] = []
-
-        def publish(self, channel: str, message: str) -> int:
-            self.sent.append((channel, message))
-            return 1
-
-    p = _Pub()
-    monkeypatch.setattr(dj, "_make_publisher", lambda: p, raising=True)
-    monkeypatch.setenv("DIGITS_EVENTS_CHANNEL", "digits:events")
-
-    class _Mapping:
-        def __init__(self) -> None:
-            self._vals = {"request_id": "r", "user_id": 9, "model_id": "m"}
-
-        def get(self, key: str, default: object = None) -> object:
-            return self._vals.get(key, default)
-
-    dj._emit_failed(_Mapping(), "user", "bad")
-
-    joined = "\n".join([m for _, m in p.sent])
-    assert "digits.train.failed.v1" in joined
+# Test removed: _emit_failed no longer exists
+# Failure notifications are now published exclusively by the watcher
+# when it detects jobs in the failed/canceled registries
 
 
 def test_emit_interrupted_success_and_publish_error(monkeypatch: pytest.MonkeyPatch) -> None:
