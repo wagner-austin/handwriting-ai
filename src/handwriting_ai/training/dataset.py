@@ -138,6 +138,34 @@ class PreprocessDataset(Dataset[tuple[Tensor, Tensor]]):
         t = out.tensor.squeeze(0)
         return t, torch.tensor(int(label), dtype=torch.long)
 
+    # Ensure spawn-pickle safety for subprocess calibration
+    def __reduce__(
+        self,
+    ) -> tuple[object, tuple[MNISTLike, _AugmentKnobs]]:
+        # Rebuild only from base and knobs; options are constant in __init__
+        return _rebuild_preprocess_dataset, (self._base, self._knobs)
+
+
+def _rebuild_preprocess_dataset(
+    base: MNISTLike, knobs: _AugmentKnobs
+) -> PreprocessDataset:  # pragma: no cover - exercised indirectly by runner tests
+    class _Cfg:
+        # Minimal implementation of _TrainCfgProto to reconstruct knobs
+        augment = bool(knobs.enable)
+        aug_rotate = float(knobs.rotate_deg)
+        aug_translate = float(knobs.translate_frac)
+        noise_prob = float(knobs.noise_prob)
+        noise_salt_vs_pepper = float(knobs.noise_salt_vs_pepper)
+        dots_prob = float(knobs.dots_prob)
+        dots_count = int(knobs.dots_count)
+        dots_size_px = int(knobs.dots_size_px)
+        blur_sigma = float(knobs.blur_sigma)
+        morph = str(knobs.morph_mode)
+        morph_kernel_px = int(knobs.morph_kernel_px)
+        batch_size = 1
+
+    return PreprocessDataset(base, _Cfg())
+
 
 @dataclass(frozen=True)
 class DataLoaderConfig:
