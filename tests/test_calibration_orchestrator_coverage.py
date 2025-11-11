@@ -185,3 +185,33 @@ def test_orchestrator_preflight_recovers_then_runs(
     # One preflight failure (checkpoint) then success run
     assert len(out) == 1 and runner.calls == 1
     assert (tmp_path / "ck.json").exists()
+
+
+def test_orchestrator_candidate_failure_aborts(tmp_path: Path) -> None:
+    ds = PreprocessDataset(_FakeMNIST(4), _DummyCfg(batch_size=2))
+    cands = [Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=2)]
+
+    class _FailRunner:
+        def run(
+            self,
+            ds2: PreprocessDataset,
+            cand: Candidate,
+            samples: int,
+            budget: BudgetConfig,
+        ) -> CandidateOutcome:
+            from handwriting_ai.training.calibration.runner import CandidateError, CandidateOutcome
+
+            return CandidateOutcome(
+                ok=False,
+                res=None,
+                error=CandidateError(kind="timeout", message="candidate timed out", exit_code=None),
+            )
+
+    cfg = OrchestratorConfig(
+        stage_a_budget=BudgetConfig(99.0, 95.0, 1.0, 1),
+        stage_b_budget=BudgetConfig(99.0, 95.0, 1.0, 1),
+        checkpoint_path=tmp_path / "ck.json",
+    )
+    orch = Orchestrator(_FailRunner(), cfg)
+    res = orch.run_stage_a(ds, cands, samples=1)
+    assert res == []
