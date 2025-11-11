@@ -41,6 +41,7 @@ class StartedV1(TypedDict):
     run_id: str | None
     ts: str
     total_epochs: int
+    queue: str | None
     cpu_cores: int
     memory_mb: int | None
     optimal_threads: int
@@ -48,6 +49,7 @@ class StartedV1(TypedDict):
     max_batch_size: int | None
     device: str
     batch_size: int
+    learning_rate: float
     augment: bool
     aug_rotate: float
     aug_translate: float
@@ -157,6 +159,8 @@ class FailedV1(TypedDict):
     ts: str
     error_kind: Literal["user", "system"]
     message: str
+    queue: str | None
+    status: Literal["failed", "canceled"]
 
 
 class InterruptedV1(TypedDict):
@@ -203,6 +207,7 @@ def started(
     ctx: Context,
     *,
     total_epochs: int,
+    queue: str | None,
     cpu_cores: int,
     memory_mb: int | None,
     optimal_threads: int,
@@ -210,6 +215,7 @@ def started(
     max_batch_size: int | None,
     device: str,
     batch_size: int,
+    learning_rate: float,
     augment: bool,
     aug_rotate: float,
     aug_translate: float,
@@ -224,6 +230,7 @@ def started(
         "run_id": ctx.run_id,
         "ts": _ts(),
         "total_epochs": int(total_epochs),
+        "queue": (str(queue) if queue is not None else None),
         "cpu_cores": int(cpu_cores),
         "memory_mb": (int(memory_mb) if isinstance(memory_mb, int) else None),
         "optimal_threads": int(optimal_threads),
@@ -231,6 +238,7 @@ def started(
         "max_batch_size": (int(max_batch_size) if max_batch_size is not None else None),
         "device": str(device),
         "batch_size": int(batch_size),
+        "learning_rate": float(learning_rate),
         "augment": bool(augment),
         "aug_rotate": float(aug_rotate),
         "aug_translate": float(aug_translate),
@@ -358,7 +366,14 @@ def completed(ctx: Context, *, val_acc: float) -> CompletedV1:
     }
 
 
-def failed(ctx: Context, *, error_kind: Literal["user", "system"], message: str) -> FailedV1:
+def failed(
+    ctx: Context,
+    *,
+    error_kind: Literal["user", "system"],
+    message: str,
+    queue: str | None,
+    status: Literal["failed", "canceled"],
+) -> FailedV1:
     return {
         "type": "digits.train.failed.v1",
         "request_id": ctx.request_id,
@@ -368,6 +383,8 @@ def failed(ctx: Context, *, error_kind: Literal["user", "system"], message: str)
         "ts": _ts(),
         "error_kind": error_kind,
         "message": message,
+        "queue": (str(queue) if queue is not None else None),
+        "status": status,
     }
 
 
