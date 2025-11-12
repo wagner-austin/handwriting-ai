@@ -20,6 +20,7 @@ from handwriting_ai.training.progress import (
     set_best_emitter,
     set_epoch_emitter,
 )
+from tests._mnist_raw import write_mnist_raw
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +103,8 @@ def test_progress_emitter_receives_epoch_updates(
     monkeypatch.setattr(mt, "_train_epoch", _ok_train_epoch, raising=True)
     set_progress_emitter(rec)
     try:
+        # Ensure MNIST raw files exist for calibration and training
+        write_mnist_raw(cfg.data_root, n=8)
         out = mt.train_with_config(cfg, (train_base, test_base))
         assert (out / "model.pt").exists()
     finally:
@@ -142,6 +145,8 @@ def test_progress_emitter_failure_raises_after_logging(
     try:
         # Should raise when emitter fails
         with pytest.raises(ValueError, match="boom"):
+            # Ensure MNIST raw files exist for calibration
+            write_mnist_raw(cfg.data_root, n=8)
             mt.train_with_config(cfg, (train_base, test_base))
     finally:
         set_progress_emitter(None)
@@ -191,6 +196,8 @@ def test_progress_emitter_every_n_epochs(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.setattr(mt, "_train_epoch", _ok_train_epoch, raising=True)
     set_progress_emitter(rec)
     try:
+        # Ensure MNIST raw files exist for calibration and training
+        write_mnist_raw(cfg.data_root, n=8)
         out = mt.train_with_config(cfg, (train_base, test_base))
         assert (out / "model.pt").exists()
     finally:
