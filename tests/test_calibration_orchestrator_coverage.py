@@ -7,6 +7,7 @@ from pytest import MonkeyPatch
 
 from handwriting_ai.training.calibration.calibrator import _DummyCfg
 from handwriting_ai.training.calibration.candidates import Candidate
+from handwriting_ai.training.calibration.ds_spec import PreprocessSpec
 from handwriting_ai.training.calibration.measure import CalibrationResult
 from handwriting_ai.training.calibration.orchestrator import Orchestrator, OrchestratorConfig
 from handwriting_ai.training.calibration.runner import BudgetConfig, CandidateOutcome
@@ -32,7 +33,7 @@ class _FailingRunner:
 
     def run(
         self,
-        ds: PreprocessDataset,
+        ds: PreprocessDataset | PreprocessSpec,
         cand: Candidate,
         samples: int,
         budget: BudgetConfig,
@@ -150,7 +151,7 @@ def test_orchestrator_preflight_recovers_then_runs(
 
         def run(
             self,
-            ds2: PreprocessDataset,
+            ds2: PreprocessDataset | PreprocessSpec,
             cand: Candidate,
             samples: int,
             budget: BudgetConfig,
@@ -194,7 +195,7 @@ def test_orchestrator_candidate_failure_aborts(tmp_path: Path) -> None:
     class _FailRunner:
         def run(
             self,
-            ds2: PreprocessDataset,
+            ds2: PreprocessDataset | PreprocessSpec,
             cand: Candidate,
             samples: int,
             budget: BudgetConfig,
