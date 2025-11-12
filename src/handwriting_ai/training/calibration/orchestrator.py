@@ -15,6 +15,7 @@ from handwriting_ai.training.calibration.checkpoint import (
     read_checkpoint,
     write_checkpoint,
 )
+from handwriting_ai.training.calibration.ds_spec import PreprocessSpec
 from handwriting_ai.training.calibration.measure import CalibrationResult
 from handwriting_ai.training.calibration.runner import (
     BudgetConfig,
@@ -73,7 +74,7 @@ class Orchestrator:
     def _run_stage(
         self,
         stage: CalibrationStage,
-        ds: PreprocessDataset,
+        ds: PreprocessDataset | PreprocessSpec,
         items: Iterable[Candidate],
         samples: int,
         budget: BudgetConfig,
@@ -126,7 +127,20 @@ class Orchestrator:
                         break
                     continue
 
+            self._log.info(
+                "orchestrator_calling_runner stage=%s idx=%d threads=%d workers=%d",
+                stage.value,
+                i,
+                cand.intra_threads,
+                cand.num_workers,
+            )
             outcome: CandidateOutcome = self._runner.run(ds, cand, int(samples), budget)
+            self._log.info(
+                "orchestrator_runner_returned stage=%s idx=%d ok=%s",
+                stage.value,
+                i,
+                outcome.ok,
+            )
             if outcome.ok and outcome.res is not None:
                 results.append(outcome.res)
                 failures = 0
@@ -169,7 +183,7 @@ class Orchestrator:
         return results
 
     def run_stage_a(
-        self, ds: PreprocessDataset, cands: list[Candidate], samples: int
+        self, ds: PreprocessDataset | PreprocessSpec, cands: list[Candidate], samples: int
     ) -> list[CalibrationResult]:
         # Attempt resume
         ckpt = read_checkpoint(self._cfg.checkpoint_path)
@@ -189,7 +203,10 @@ class Orchestrator:
         )
 
     def run_stage_b(
-        self, ds: PreprocessDataset, shortlist: list[CalibrationResult], samples: int
+        self,
+        ds: PreprocessDataset | PreprocessSpec,
+        shortlist: list[CalibrationResult],
+        samples: int,
     ) -> list[CalibrationResult]:
         # Convert shortlist results back into candidates
         cands: list[Candidate] = [
