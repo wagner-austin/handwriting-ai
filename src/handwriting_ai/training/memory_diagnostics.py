@@ -235,9 +235,9 @@ def reset_diagnostics() -> None:
 __all__ = [
     "MemoryDiagnostics",
     "MemoryHistory",
-    "initialize_diagnostics",
-    "record_batch_memory",
     "get_memory_diagnostics",
+    "initialize_diagnostics",
     "log_memory_diagnostics",
+    "record_batch_memory",
     "reset_diagnostics",
 ]
