@@ -206,7 +206,7 @@ def test_read_cgroup_breakdown_no_files(monkeypatch: pytest.MonkeyPatch, tmp_pat
 
     monkeypatch.setattr(mon, "_CGROUP_MEM_STAT", stat)
 
-    with pytest.raises(RuntimeError, match="no cgroup memory.stat file found"):
+    with pytest.raises(RuntimeError, match=r"no cgroup memory\.stat file found"):
         mon._read_cgroup_breakdown()
 
 
