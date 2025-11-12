@@ -33,10 +33,10 @@ serve: install-dev
 	poetry run uvicorn handwriting_ai.api.app:app --host 0.0.0.0 --port $(PORT)
 
 test: install-dev
-	poetry run pytest --cov=src --cov-report=term-missing -v
+	poetry run pytest --cov=src --cov=scripts --cov-branch --cov-report=term-missing -v
 
 test-fast: install-dev
-	poetry run pytest --cov=src --cov-report=term-missing -vv -x --maxfail=1 -rA
+	poetry run pytest --cov=src --cov=scripts --cov-branch --cov-report=term-missing -vv -x --maxfail=1 -rA
 
 lint: install-dev
 	poetry run ruff check . --fix
@@ -134,3 +134,4 @@ stop:
 clean:
 	docker compose down -v --remove-orphans || true
 	docker compose up -d --build
+
