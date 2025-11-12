@@ -5,19 +5,13 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from handwriting_ai.monitoring import get_memory_snapshot
-from handwriting_ai.training.dataset import (
-    DataLoaderConfig,
-    MNISTLike,
-    PreprocessDataset,
-)
-from handwriting_ai.training.dataset import (
-    _TrainCfgProto as _AugCfgProto,
-)
+from handwriting_ai.training.dataset import DataLoaderConfig
 from handwriting_ai.training.resources import ResourceLimits
 from handwriting_ai.training.runtime import EffectiveConfig
 
 from .cache import _read_cache, _valid_cache, _write_cache
 from .candidates import _generate_candidates
+from .ds_spec import PreprocessSpec
 from .measure import CalibrationResult
 from .orchestrator import Orchestrator, OrchestratorConfig
 from .runner import BudgetConfig, SubprocessRunner
@@ -46,7 +40,7 @@ def _result_to_effective(res: CalibrationResult) -> EffectiveConfig:
 
 
 def calibrate_input_pipeline(
-    train_base: MNISTLike,
+    ds: PreprocessSpec,
     *,
     limits: ResourceLimits,
     requested_batch_size: int,
@@ -62,8 +56,7 @@ def calibrate_input_pipeline(
         if cached is not None:
             return _result_to_effective(cached)
 
-    cfg_aug: _AugCfgProto = _DummyCfg(batch_size=max(1, int(requested_batch_size)))
-    ds = PreprocessDataset(train_base, cfg_aug)
+    _ = _DummyCfg(batch_size=max(1, int(requested_batch_size)))
 
     # Compute budgets based on observed environment and thresholds (subprocess-only)
     # Use current snapshot for start gate; use conservative aborts for <1GB tiers
@@ -112,6 +105,8 @@ def calibrate_input_pipeline(
     log.info("calibration_stage_a_complete measured=%d", len(stage_a))
     if len(stage_a) == 0:
         log.error("calibration_failed_stage_a_no_results")
+        # Clear checkpoint on total failure to avoid stale resume on retry
+        ckpt_path.unlink(missing_ok=True)
         raise CalibrationError("calibration failed: no results in stage A")
     stage_a.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
     shortlist = stage_a[: min(3, len(stage_a))]
@@ -122,6 +117,8 @@ def calibrate_input_pipeline(
     log.info("calibration_stage_b_complete measured=%d", len(refined))
     if len(refined) == 0:
         log.error("calibration_failed_stage_b_no_results")
+        # Clear checkpoint on total failure to avoid stale resume on retry
+        ckpt_path.unlink(missing_ok=True)
         raise CalibrationError("calibration failed: no results in stage B")
     refined.sort(key=lambda r: (-r.samples_per_sec, r.p95_ms))
     best = refined[0]
