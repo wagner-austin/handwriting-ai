@@ -44,7 +44,7 @@ def _measure_loader(
     start = _t.perf_counter()
     # Measure first batch
     t0 = _t.perf_counter()
-    x, y = first
+    _x, y = first
     samples += int(y.shape[0])
     times.append((_t.perf_counter() - t0) * 1000.0)
     seen = 1
@@ -54,7 +54,7 @@ def _measure_loader(
         if nxt is None:
             break
         t1 = _t.perf_counter()
-        x2, y2 = nxt
+        _x2, y2 = nxt
         samples += int(y2.shape[0])
         times.append((_t.perf_counter() - t1) * 1000.0)
         seen += 1
