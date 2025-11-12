@@ -65,8 +65,8 @@ def apply_threads(ec: EffectiveConfig) -> None:
 
 __all__ = [
     "EffectiveConfig",
-    "build_effective_config",
-    "apply_threads",
-    "detect_resource_limits",
     "ResourceLimits",
+    "apply_threads",
+    "build_effective_config",
+    "detect_resource_limits",
 ]
