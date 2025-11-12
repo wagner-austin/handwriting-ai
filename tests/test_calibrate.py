@@ -6,6 +6,11 @@ from PIL import Image
 from torch.utils.data import Dataset
 
 from handwriting_ai.training.calibrate import _candidate_workers, calibrate_input_pipeline
+from handwriting_ai.training.calibration.ds_spec import (
+    AugmentSpec,
+    InlineSpec,
+    PreprocessSpec,
+)
 from handwriting_ai.training.resources import ResourceLimits
 
 
@@ -18,7 +23,24 @@ class _TinyBase(Dataset[tuple[Image.Image, int]]):
 
 
 def test_calibrate_persists_and_reuses_cache(tmp_path: Path) -> None:
-    base = _TinyBase()
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=2,
         memory_bytes=128 * 1024 * 1024,
@@ -66,7 +88,24 @@ def test_candidate_workers_enumeration() -> None:
 
 
 def test_calibrate_force_recomputes(tmp_path: Path) -> None:
-    base = _TinyBase()
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=4,
         memory_bytes=None,
