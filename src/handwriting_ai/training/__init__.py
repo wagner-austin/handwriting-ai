@@ -13,13 +13,13 @@ from .mnist_train import (
 )
 
 __all__ = [
-    "TrainConfig",
     "MNISTLike",
+    "TrainConfig",
     "_build_model",
     "_build_optimizer_and_scheduler",
     "_configure_threads",
-    "make_loaders",
-    "_train_epoch",
     "_evaluate",
+    "_train_epoch",
+    "make_loaders",
     "train_with_config",
 ]
