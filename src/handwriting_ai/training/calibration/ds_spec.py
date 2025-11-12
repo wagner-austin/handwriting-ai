@@ -52,10 +52,10 @@ def _unused_make_augment_spec(_: _AugCfgProto) -> AugmentSpec:
 
 
 __all__ = [
-    "BaseKind",
-    "MNISTSpec",
-    "InlineSpec",
     "AugmentSpec",
+    "BaseKind",
+    "InlineSpec",
+    "MNISTSpec",
     "PreprocessSpec",
     "_unused_make_augment_spec",
 ]
