@@ -87,6 +87,10 @@ def test_process_train_job_emits_progress(monkeypatch: pytest.MonkeyPatch, tmp_p
             aug_rotate=0.0,
             aug_translate=0.0,
         )
+        # Ensure MNIST raw files exist for calibration
+        from tests._mnist_raw import write_mnist_raw
+
+        write_mnist_raw(cfg2.data_root, n=8)
         return mt.train_with_config(cfg2, (train_base, test_base))
 
     monkeypatch.setattr(dj, "_run_training", _realish)
