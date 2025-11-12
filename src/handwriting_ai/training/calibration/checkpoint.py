@@ -127,8 +127,8 @@ def write_checkpoint(path: Path, ckpt: CalibrationCheckpoint) -> None:
 
 
 __all__ = [
-    "CalibrationStage",
     "CalibrationCheckpoint",
+    "CalibrationStage",
     "read_checkpoint",
     "write_checkpoint",
 ]
