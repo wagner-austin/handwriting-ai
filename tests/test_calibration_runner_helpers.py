@@ -7,9 +7,15 @@ from typing import Protocol
 import pytest
 from PIL import Image
 
-from handwriting_ai.training.calibration.ds_spec import AugmentSpec, InlineSpec, MNISTSpec, PreprocessSpec
+from handwriting_ai.training.calibration.ds_spec import (
+    AugmentSpec,
+    InlineSpec,
+    MNISTSpec,
+    PreprocessSpec,
+)
 from handwriting_ai.training.calibration.runner import (
     _build_dataset_from_spec,
+    _child_entry,
     _mnist_read_images_labels,
     _to_spec,
 )
@@ -130,6 +136,52 @@ def test_build_dataset_from_spec_inline_success() -> None:
     ds = _build_dataset_from_spec(spec)
     assert isinstance(ds, PreprocessDataset)
     assert len(ds) == 7
+
+
+def test_build_dataset_from_spec_inline_fail_and_sleep(tmp_path: Path) -> None:
+    # fail=True triggers RuntimeError path in _InlineDataset.__getitem__
+    spec_fail = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=1, sleep_s=0.0, fail=True),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
+    ds_fail = _build_dataset_from_spec(spec_fail)
+    with pytest.raises(RuntimeError, match="fail-item"):
+        _ = ds_fail[0]
+
+    # sleep_s>0 exercises sleep branch in _InlineDataset.__getitem__
+    spec_sleep = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=1, sleep_s=0.001, fail=False),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
+    ds_sleep = _build_dataset_from_spec(spec_sleep)
+    x, y = ds_sleep[0]
+    assert x.shape[-2:] == (28, 28) and int(y) in range(10)
 
 
 def test_build_dataset_from_spec_inline_missing_details() -> None:
@@ -253,7 +305,10 @@ def test_build_dataset_from_spec_mnist(tmp_path: Path) -> None:
     raw.mkdir(parents=True, exist_ok=True)
     n = 4
     _write_gzip(raw / "train-images-idx3-ubyte.gz", _mk_images_header(n) + bytes([0] * (n * 784)))
-    _write_gzip(raw / "train-labels-idx1-ubyte.gz", _mk_labels_header(n) + bytes([i % 10 for i in range(n)]))
+    _write_gzip(
+        raw / "train-labels-idx1-ubyte.gz",
+        _mk_labels_header(n) + bytes([i % 10 for i in range(n)]),
+    )
 
     spec = PreprocessSpec(
         base_kind="mnist",
@@ -275,4 +330,152 @@ def test_build_dataset_from_spec_mnist(tmp_path: Path) -> None:
     ds = _build_dataset_from_spec(spec)
     assert isinstance(ds, PreprocessDataset)
     assert len(ds) == n
+    # Exercise _MNISTRawDataset.__getitem__ through wrapper
+    x, y = ds[0]
+    assert x.shape[-2:] == (28, 28) and int(y) in range(10)
 
+
+def test_build_mnist_dataset_missing_details_raises() -> None:
+    import handwriting_ai.training.calibration.runner as rmod
+
+    spec = PreprocessSpec(
+        base_kind="mnist",
+        mnist=None,
+        inline=None,
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
+    with pytest.raises(RuntimeError, match="mnist spec missing details"):
+        rmod._build_mnist_dataset(spec)
+
+
+def test_child_entry_inline_executes_and_writes_result(tmp_path: Path) -> None:
+    # Build a minimal inline spec and candidate
+    spec = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=4, sleep_s=0.0, fail=False),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
+
+    import logging
+    import multiprocessing as mp
+    from multiprocessing.queues import Queue as MPQueue
+
+    from handwriting_ai.training.calibration.candidates import Candidate
+
+    cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=2)
+    out_file = str(tmp_path / "child_result.txt")
+
+    q: MPQueue[logging.LogRecord] = mp.get_context("spawn").Queue()
+    # Run inline inside this process
+    _child_entry(out_file, spec, cand, samples=1, abort_pct=99.0, log_q=q)
+    content = Path(out_file).read_text(encoding="utf-8")
+    assert "ok=1" in content and "batch_size=2" in content
+
+
+def test_run_finally_kills_alive_child(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # Precreate expected outdir and result
+    out_dir = tmp_path / "calib_child_test"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / "result.txt"
+    out_path.write_text(
+        "ok=1\n"
+        "intra_threads=1\n"
+        "interop_threads=\n"
+        "num_workers=0\n"
+        "batch_size=1\n"
+        "samples_per_sec=1.0\n"
+        "p95_ms=1.0\n",
+        encoding="utf-8",
+    )
+
+    # Stub mkdtemp to return our directory
+    import tempfile as _tmp
+
+    def _mk(prefix: str) -> str:
+        return str(out_dir)
+
+    monkeypatch.setattr(_tmp, "mkdtemp", _mk, raising=True)
+
+    # Dummy context and process that stays alive until kill/join called
+    class _Proc:
+        def __init__(self) -> None:
+            self._alive = True
+            self._killed = False
+            self._joined = False
+
+        def start(self) -> None:  # no-op
+            self._alive = True
+
+        def is_alive(self) -> bool:
+            return True
+
+        def kill(self) -> None:
+            self._killed = True
+
+        def join(self, timeout: float | None = None) -> None:
+            self._joined = True
+
+        @property
+        def exitcode(self) -> int:
+            return 0
+
+    class _Ctx:
+        def Process(self, target: object, args: tuple[object, ...]) -> _Proc:  # noqa: N802
+            return _Proc()
+
+        class _Q:
+            def put(self, _: object) -> None:
+                return None
+
+        def Queue(self) -> _Q:  # noqa: N802
+            return _Ctx._Q()
+
+    # Replace QueueListener with no-op to avoid threading
+    import handwriting_ai.training.calibration.runner as rmod
+
+    class _NoopListener:
+        def start(self) -> None:
+            return None
+
+        def stop(self) -> None:
+            return None
+
+    def _make_listener(*args: object, **kwargs: object) -> _NoopListener:
+        return _NoopListener()
+
+    monkeypatch.setattr(rmod, "_QueueListener", _make_listener, raising=True)
+
+    runner = rmod.SubprocessRunner()
+    # Monkeypatch context used by runner
+    monkeypatch.setattr(runner, "_ctx", _Ctx(), raising=True)
+
+    from handwriting_ai.training.calibration.candidates import Candidate
+
+    ds = PreprocessDataset(_TinyBase(2), _Cfg())
+    cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=1)
+    budget = rmod.BudgetConfig(start_pct_max=99.0, abort_pct=99.0, timeout_s=10.0, max_failures=1)
+    out = runner.run(ds, cand, samples=1, budget=budget)
+    assert out.ok and out.res is not None and int(out.res.batch_size) == 1
