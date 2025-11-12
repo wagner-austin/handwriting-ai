@@ -90,6 +90,10 @@ def test_train_uses_resource_limits(monkeypatch: pytest.MonkeyPatch, tmp_path: P
 
     cfg = _cfg(tmp_path)
     base = _TinyBase()
+    # Ensure MNIST raw files exist under cfg.data_root
+    from tests._mnist_raw import write_mnist_raw
+
+    write_mnist_raw(cfg.data_root, n=8)
     out = mt.train_with_config(cfg, (base, base))
     assert (out / "model.pt").exists()
     # Effective batch capped to 4 per ResourceLimits and persisted in manifest
