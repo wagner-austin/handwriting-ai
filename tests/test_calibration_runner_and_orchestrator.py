@@ -8,6 +8,11 @@ from PIL import Image
 
 from handwriting_ai.training.calibration.calibrator import _DummyCfg
 from handwriting_ai.training.calibration.candidates import Candidate
+from handwriting_ai.training.calibration.ds_spec import (
+    AugmentSpec,
+    InlineSpec,
+    PreprocessSpec,
+)
 from handwriting_ai.training.calibration.measure import CalibrationResult
 from handwriting_ai.training.calibration.orchestrator import (
     Orchestrator,
@@ -55,22 +60,54 @@ def test_subprocess_runner_success() -> None:
 
 
 def test_subprocess_runner_timeout() -> None:
-    # Each item sleeps enough to exceed timeout
-    ds = _mk_ds(8, sleep_s=0.25)
+    # Build inline spec with per-item sleep so child exceeds timeout
+    spec = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.25, fail=False),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
     runner = SubprocessRunner()
     budget = BudgetConfig(start_pct_max=99.0, abort_pct=95.0, timeout_s=0.2, max_failures=1)
     cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=4)
-    out = runner.run(ds, cand, samples=1, budget=budget)
+    out = runner.run(spec, cand, samples=1, budget=budget)
     assert not out.ok and out.error is not None
     assert out.error.kind == "timeout"
 
 
 def test_subprocess_runner_runtime_error() -> None:
-    ds = _mk_ds(8, fail=True)
+    spec = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=True),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
     runner = SubprocessRunner()
     budget = BudgetConfig(start_pct_max=99.0, abort_pct=95.0, timeout_s=10.0, max_failures=1)
     cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=4)
-    out = runner.run(ds, cand, samples=1, budget=budget)
+    out = runner.run(spec, cand, samples=1, budget=budget)
     assert not out.ok and out.error is not None
     assert out.error.kind in {"runtime", "oom", "timeout"}
 
@@ -85,7 +122,7 @@ def test_orchestrator_stage_flow_and_breaker(
 
         def run(
             self,
-            ds: PreprocessDataset,
+            ds: PreprocessDataset | PreprocessSpec,
             cand: Candidate,
             samples: int,
             budget: BudgetConfig,
