@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import gc as _gc
+import logging as _logging
 import multiprocessing as _mp
 import os as _os
 import time as _time
 from contextlib import suppress
 from dataclasses import dataclass
+from logging.handlers import QueueHandler as _QueueHandler
+from logging.handlers import QueueListener as _QueueListener
 from multiprocessing.process import BaseProcess
 from pathlib import Path
 from typing import Protocol, runtime_checkable
@@ -87,8 +90,8 @@ def _child_entry(
     cand: Candidate,
     samples: int,
     abort_pct: float,
+    log_q: _mp.Queue[_logging.LogRecord],
 ) -> None:
-    import logging as _logging
     import time as _time
 
     from handwriting_ai.logging import init_logging
@@ -96,6 +99,16 @@ def _child_entry(
     # Child process needs to initialize its own logging
     init_logging()
     log = _logging.getLogger("handwriting_ai")
+    # Remove any pre-existing StreamHandlers to avoid duplicate emission
+    for h in tuple(log.handlers):
+        if isinstance(h, _logging.StreamHandler):
+            log.removeHandler(h)
+    log.propagate = False
+
+    # Bridge child logs to parent via standard QueueHandler
+    _qh = _QueueHandler(log_q)
+    _qh.setLevel(log.level)
+    log.addHandler(_qh)
     start_entry = _time.perf_counter()
 
     # Log immediately to prove we got here
@@ -139,6 +152,10 @@ def _child_entry(
         total_elapsed = _time.perf_counter() - start_entry
         log.info("calibration_child_complete total_s=%.1f", total_elapsed)
     finally:
+        # Flush QueueHandler to ensure all log records reach parent before exit
+        for h in log.handlers:
+            if hasattr(h, "flush"):
+                h.flush()
         # Ensure prompt teardown
         _gc.collect()
 
@@ -155,7 +172,6 @@ class SubprocessRunner:
         samples: int,
         budget: BudgetConfig,
     ) -> CandidateOutcome:
-        import logging as _logging
         import tempfile as _tmp
 
         log = _logging.getLogger("handwriting_ai")
@@ -166,9 +182,16 @@ class SubprocessRunner:
         spec = _to_spec(ds)
 
         spawn_start = _time.perf_counter()
+        log_q: _mp.Queue[_logging.LogRecord] = self._ctx.Queue()
+        # Mirror child logs to both root and application logger handlers (no fallbacks)
+        _root_handlers = list(_logging.getLogger().handlers)
+        _app_handlers = list(_logging.getLogger("handwriting_ai").handlers)
+        _parent_handlers = tuple(_root_handlers + _app_handlers)
+        listener = _QueueListener(log_q, *_parent_handlers, respect_handler_level=True)
+        listener.start()
         proc = self._ctx.Process(
             target=_child_entry,
-            args=(out_path, spec, cand, int(samples), float(budget.abort_pct)),
+            args=(out_path, spec, cand, int(samples), float(budget.abort_pct), log_q),
         )
         # Ensure non-daemonic to allow DataLoader workers in child
         from contextlib import suppress as _suppress
@@ -195,6 +218,8 @@ class SubprocessRunner:
                     proc.kill()
                 with suppress(Exception):
                     proc.join(1.0)
+            with suppress(Exception):
+                listener.stop()
             _gc.collect()
 
     def _wait_for_outcome(
@@ -208,6 +233,12 @@ class SubprocessRunner:
         while proc.is_alive():
             outcome = self._try_read_result(out_path, exited=False, exit_code=None)
             if outcome is not None:
+                # Result file found, but child still alive - try to join briefly to
+                # encourage clean exit and log flush; suppress on non-started mocks.
+                remaining_time = timeout_s - (_time.perf_counter() - start)
+                join_timeout = min(5.0, max(0.1, remaining_time))
+                with suppress(Exception):
+                    proc.join(timeout=join_timeout)
                 return outcome
             if (_time.perf_counter() - start) >= timeout_s:
                 # Timeout: terminate and mark
@@ -248,6 +279,8 @@ class SubprocessRunner:
                 kind="runtime", message=f"child exited code={code}", exit_code=code
             ),
         )
+
+    # Queue forwarding handled by QueueListener
 
     @staticmethod
     def _try_read_result(
@@ -300,9 +333,9 @@ class SubprocessRunner:
 
 
 __all__ = [
+    "BudgetConfig",
     "CandidateError",
     "CandidateOutcome",
-    "BudgetConfig",
     "CandidateRunner",
     "SubprocessRunner",
 ]
@@ -380,7 +413,7 @@ def _to_spec(ds: PreprocessDataset | PreprocessSpec) -> PreprocessSpec:
         blur_sigma=float(k.blur_sigma),
         morph=str(k.morph_mode),
     )
-    inline = InlineSpec(n=int(len(ds)), sleep_s=0.0, fail=False)
+    inline = InlineSpec(n=len(ds), sleep_s=0.0, fail=False)
     return PreprocessSpec(base_kind="inline", mnist=None, inline=inline, augment=aug)
 
 
