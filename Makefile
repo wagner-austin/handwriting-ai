@@ -9,6 +9,7 @@ help:
 	@echo "  make install-dev - Install with dev dependencies"
 	@echo "  make serve       - Run the API locally with uvicorn"
 	@echo "  make test        - Run pytest with coverage"
+	@echo "  make test-fast   - Fail fast, verbose logs during run"
 	@echo "  make lint        - Ruff fix+format, then mypy (strict) + YAML lint"
 	@echo "  make check       - Lint + Test"
 	@echo "  make train       - Train MNIST model (pretty color logs)"
@@ -33,6 +34,9 @@ serve: install-dev
 
 test: install-dev
 	poetry run pytest --cov=src --cov-report=term-missing -v
+
+test-fast: install-dev
+	poetry run pytest --cov=src --cov-report=term-missing -vv -x --maxfail=1 -rA
 
 lint: install-dev
 	poetry run ruff check . --fix
@@ -130,4 +134,3 @@ stop:
 clean:
 	docker compose down -v --remove-orphans || true
 	docker compose up -d --build
-
