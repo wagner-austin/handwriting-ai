@@ -57,7 +57,7 @@ def test_dataset_with_noise_and_blur(tmp_path: Path) -> None:
     cfg = replace(cfg, noise_prob=0.2, noise_salt_vs_pepper=0.6, blur_sigma=0.5)
     train_base = _TinyBase(4)
     test_base = _TinyBase(2)
-    ds, train_loader, test_loader = make_loaders(train_base, test_base, cfg)
+    ds, _train_loader, _test_loader = make_loaders(train_base, test_base, cfg)
     sample: tuple[Tensor, Tensor] = ds[0]
     x, y = sample
     assert hasattr(x, "shape") and hasattr(y, "shape")
@@ -71,7 +71,7 @@ def test_dataset_with_dots_and_morph(tmp_path: Path) -> None:
     )
     train_base = _TinyBase(4)
     test_base = _TinyBase(2)
-    ds2, train_loader2, test_loader2 = make_loaders(train_base, test_base, cfg)
+    ds2, _train_loader2, _test_loader2 = make_loaders(train_base, test_base, cfg)
     sample2: tuple[Tensor, Tensor] = ds2[0]
     x, y = sample2
     assert hasattr(x, "shape") and hasattr(y, "shape")
@@ -99,6 +99,6 @@ def test_dataset_with_morph_dilate(tmp_path: Path) -> None:
     cfg = replace(cfg, morph="dilate", morph_kernel_px=3)
     train_base = _TinyBase(2)
     test_base = _TinyBase(2)
-    ds, train_loader, test_loader = make_loaders(train_base, test_base, cfg)
-    x, y = ds[0]
+    ds, _train_loader, _test_loader = make_loaders(train_base, test_base, cfg)
+    x, _y = ds[0]
     assert tuple(x.shape[1:]) == (28, 28)
