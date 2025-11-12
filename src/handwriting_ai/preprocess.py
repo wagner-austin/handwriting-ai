@@ -32,7 +32,7 @@ class PreprocessOptions:
 def run_preprocess(img: Image.Image, opts: PreprocessOptions) -> PreprocessOutput:
     try:
         g = _load_to_grayscale(img)
-        if opts.invert is True or opts.invert is None and _estimate_background_is_dark(g):
+        if opts.invert is True or (opts.invert is None and _estimate_background_is_dark(g)):
             g = ImageOps.invert(g)
 
         bw = _otsu_binarize(g)
@@ -280,11 +280,11 @@ def _center_on_square(img: Image.Image) -> Image.Image:
     cx = sum(xs) / len(xs)
     cy = sum(ys) / len(ys)
     side = max(width, height)
-    margin = int(round(side * 0.1))
+    margin = round(side * 0.1)
     canvas_side = side + 2 * margin
     canvas = Image.new("L", (canvas_side, canvas_side), 255)
-    paste_x = int(round(canvas_side / 2 - cx))
-    paste_y = int(round(canvas_side / 2 - cy))
+    paste_x = round(canvas_side / 2 - cx)
+    paste_y = round(canvas_side / 2 - cy)
     canvas.paste(img, (paste_x, paste_y))
     bbox = ImageOps.invert(canvas).getbbox()
     if bbox is None:
