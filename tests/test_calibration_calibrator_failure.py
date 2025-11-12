@@ -12,6 +12,7 @@ from handwriting_ai.training.calibration.calibrator import (
     calibrate_input_pipeline as _cal,
 )
 from handwriting_ai.training.calibration.candidates import Candidate
+from handwriting_ai.training.calibration.ds_spec import AugmentSpec, InlineSpec, PreprocessSpec
 from handwriting_ai.training.calibration.measure import CalibrationResult
 from handwriting_ai.training.dataset import PreprocessDataset
 from handwriting_ai.training.resources import ResourceLimits
@@ -63,7 +64,24 @@ def test_calibrator_raises_on_empty_stage_a(
 ) -> None:
     monkeypatch.setattr("handwriting_ai.training.calibration.calibrator.Orchestrator", _OrchEmpty)
 
-    base = _FakeMNIST(4)
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=4, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=2,
         memory_bytes=1024 * 1024 * 1024,
@@ -73,7 +91,7 @@ def test_calibrator_raises_on_empty_stage_a(
     )
     with pytest.raises(CalibrationError):
         _cal(
-            train_base=base,
+            base,
             limits=limits,
             requested_batch_size=4,
             samples=1,
@@ -88,7 +106,24 @@ def test_calibrator_raises_on_empty_stage_b(
 ) -> None:
     monkeypatch.setattr("handwriting_ai.training.calibration.calibrator.Orchestrator", _OrchEmptyB)
 
-    base = _FakeMNIST(4)
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=4, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=2,
         memory_bytes=1024 * 1024 * 1024,
@@ -98,7 +133,7 @@ def test_calibrator_raises_on_empty_stage_b(
     )
     with pytest.raises(CalibrationError):
         _cal(
-            train_base=base,
+            base,
             limits=limits,
             requested_batch_size=4,
             samples=1,
