@@ -7,9 +7,18 @@ import time as _time
 from contextlib import suppress
 from dataclasses import dataclass
 from multiprocessing.process import BaseProcess
-from typing import Protocol
+from pathlib import Path
+from typing import Protocol, runtime_checkable
+
+from PIL import Image as _Image
+from torch.utils.data import Dataset as _TorchDataset
 
 from handwriting_ai.training.calibration.candidates import Candidate
+from handwriting_ai.training.calibration.ds_spec import (
+    AugmentSpec,
+    InlineSpec,
+    PreprocessSpec,
+)
 from handwriting_ai.training.calibration.measure import CalibrationResult, _measure_candidate
 from handwriting_ai.training.dataset import PreprocessDataset
 from handwriting_ai.training.safety import MemoryGuardConfig, set_memory_guard_config
@@ -40,7 +49,7 @@ class BudgetConfig:
 class CandidateRunner(Protocol):
     def run(  # pragma: no cover - signature line not counted reliably by coverage on some setups
         self,
-        ds: PreprocessDataset,
+        ds: PreprocessDataset | PreprocessSpec,
         cand: Candidate,
         samples: int,
         budget: BudgetConfig,
@@ -74,7 +83,7 @@ def _emit_result_file(out_path: str, res: CalibrationResult) -> None:
 
 def _child_entry(
     out_path: str,
-    ds: PreprocessDataset,
+    spec: PreprocessSpec,
     cand: Candidate,
     samples: int,
     abort_pct: float,
@@ -82,16 +91,31 @@ def _child_entry(
     import logging as _logging
     import time as _time
 
+    from handwriting_ai.logging import init_logging
+
+    # Child process needs to initialize its own logging
+    init_logging()
     log = _logging.getLogger("handwriting_ai")
     start_entry = _time.perf_counter()
+
+    # Log immediately to prove we got here
+    log.info("calibration_child_entry_start pid=%d", _os.getpid())
+
     log.info(
-        "calibration_child_started pid=%d threads=%d workers=%d bs=%d",
+        "calibration_child_started pid=%d threads=%d workers=%d bs=%d base_kind=%s",
         _os.getpid(),
         cand.intra_threads,
         cand.num_workers,
         cand.batch_size,
+        spec.base_kind,
     )
     try:
+        # Rebuild dataset from spec to avoid pickling large objects
+        log.info("calibration_child_building_dataset base_kind=%s", spec.base_kind)
+        start_build = _time.perf_counter()
+        ds = _build_dataset_from_spec(spec)
+        build_elapsed = _time.perf_counter() - start_build
+        log.info("calibration_child_dataset_built elapsed_ms=%.1f", build_elapsed * 1000)
         # Configure memory guard inside the child for calibration attempts.
         start_guard = _time.perf_counter()
         set_memory_guard_config(
@@ -126,7 +150,7 @@ class SubprocessRunner:
 
     def run(
         self,
-        ds: PreprocessDataset,
+        ds: PreprocessDataset | PreprocessSpec,
         cand: Candidate,
         samples: int,
         budget: BudgetConfig,
@@ -138,11 +162,19 @@ class SubprocessRunner:
         out_dir = _tmp.mkdtemp(prefix="calib_child_")
         out_path = _os.path.join(out_dir, "result.txt")
 
+        # Always pass a lightweight spec to the child
+        spec = _to_spec(ds)
+
         spawn_start = _time.perf_counter()
         proc = self._ctx.Process(
             target=_child_entry,
-            args=(out_path, ds, cand, int(samples), float(budget.abort_pct)),
+            args=(out_path, spec, cand, int(samples), float(budget.abort_pct)),
         )
+        # Ensure non-daemonic to allow DataLoader workers in child
+        from contextlib import suppress as _suppress
+
+        with _suppress(Exception):
+            proc.daemon = False
         start = _time.perf_counter()
         proc.start()
         spawn_elapsed = _time.perf_counter() - spawn_start
@@ -274,3 +306,187 @@ __all__ = [
     "CandidateRunner",
     "SubprocessRunner",
 ]
+
+# ---------- Helpers (module-internal) ----------
+
+
+@runtime_checkable
+class _KnobsProto(Protocol):
+    enable: bool
+    rotate_deg: float
+    translate_frac: float
+    noise_prob: float
+    noise_salt_vs_pepper: float
+    dots_prob: float
+    dots_count: int
+    dots_size_px: int
+    blur_sigma: float
+    morph_mode: str
+
+
+# Module-level dataset classes for Windows spawn pickle compatibility
+
+
+class _InlineDataset(_TorchDataset[tuple[_Image.Image, int]]):
+    """Inline synthetic dataset for calibration."""
+
+    def __init__(self, n: int, sleep_s: float, fail: bool) -> None:
+        self._n = int(n)
+        self._sleep = float(sleep_s)
+        self._fail = bool(fail)
+
+    def __len__(self) -> int:
+        return self._n
+
+    def __getitem__(self, idx: int) -> tuple[_Image.Image, int]:
+        import time as _time
+
+        if self._fail:
+            raise RuntimeError("fail-item")
+        if self._sleep > 0:
+            _time.sleep(self._sleep)
+        return _Image.new("L", (28, 28), color=0), int(idx % 10)
+
+
+class _MNISTRawDataset(_TorchDataset[tuple[_Image.Image, int]]):
+    """MNIST dataset from raw bytes (for calibration)."""
+
+    def __init__(self, images: list[bytes], labels: list[int]) -> None:
+        self._images = images
+        self._labels = labels
+
+    def __len__(self) -> int:
+        return len(self._images)
+
+    def __getitem__(self, idx: int) -> tuple[_Image.Image, int]:
+        i = int(idx)
+        img = _Image.frombytes("L", (28, 28), self._images[i])
+        return img, self._labels[i]
+
+
+def _to_spec(ds: PreprocessDataset | PreprocessSpec) -> PreprocessSpec:
+    if isinstance(ds, PreprocessSpec):
+        return ds
+    k = ds.knobs
+    aug = AugmentSpec(
+        augment=bool(k.enable),
+        aug_rotate=float(k.rotate_deg),
+        aug_translate=float(k.translate_frac),
+        noise_prob=float(k.noise_prob),
+        noise_salt_vs_pepper=float(k.noise_salt_vs_pepper),
+        dots_prob=float(k.dots_prob),
+        dots_count=int(k.dots_count),
+        dots_size_px=int(k.dots_size_px),
+        blur_sigma=float(k.blur_sigma),
+        morph=str(k.morph_mode),
+    )
+    inline = InlineSpec(n=int(len(ds)), sleep_s=0.0, fail=False)
+    return PreprocessSpec(base_kind="inline", mnist=None, inline=inline, augment=aug)
+
+
+def _build_dataset_from_spec(spec: PreprocessSpec) -> PreprocessDataset:
+    class _Cfg:
+        augment = bool(spec.augment.augment)
+        aug_rotate = float(spec.augment.aug_rotate)
+        aug_translate = float(spec.augment.aug_translate)
+        noise_prob = float(spec.augment.noise_prob)
+        noise_salt_vs_pepper = float(spec.augment.noise_salt_vs_pepper)
+        dots_prob = float(spec.augment.dots_prob)
+        dots_count = int(spec.augment.dots_count)
+        dots_size_px = int(spec.augment.dots_size_px)
+        blur_sigma = float(spec.augment.blur_sigma)
+        morph = str(spec.augment.morph)
+        morph_kernel_px = 1
+        batch_size = 1
+
+    if spec.base_kind == "mnist":
+        return _build_mnist_dataset(spec)
+
+    if spec.base_kind == "inline":
+        if spec.inline is None:
+            raise RuntimeError("inline spec missing details")
+
+        base = _InlineDataset(spec.inline.n, spec.inline.sleep_s, spec.inline.fail)
+        return PreprocessDataset(base, _Cfg())
+
+    raise RuntimeError(f"unknown base_kind: {spec.base_kind}")
+
+
+def _mnist_find_raw_dir(root: Path) -> Path:
+    p = root / "MNIST" / "raw"
+    return p if p.exists() else root
+
+
+def _mnist_read_images_labels(root: Path, train: bool) -> tuple[list[bytes], list[int]]:
+    import gzip as _gzip
+
+    rd = _mnist_find_raw_dir(root)
+    pref = "train" if train else "t10k"
+    img_path = rd / f"{pref}-images-idx3-ubyte.gz"
+    lbl_path = rd / f"{pref}-labels-idx1-ubyte.gz"
+    if not (img_path.exists() and lbl_path.exists()):
+        raise RuntimeError("MNIST raw files not found under root")
+    with _gzip.open(img_path, "rb") as fimg:
+        header = fimg.read(16)
+        if len(header) != 16:
+            raise RuntimeError("invalid MNIST images header")
+        magic = int.from_bytes(header[0:4], "big")
+        n = int.from_bytes(header[4:8], "big")
+        rows = int.from_bytes(header[8:12], "big")
+        cols = int.from_bytes(header[12:16], "big")
+        if magic != 2051 or rows != 28 or cols != 28:
+            raise RuntimeError("invalid MNIST images file")
+        total = int(n * rows * cols)
+        data = fimg.read(total)
+        if len(data) != total:
+            raise RuntimeError("truncated MNIST images file")
+    with _gzip.open(lbl_path, "rb") as flbl:
+        header2 = flbl.read(8)
+        if len(header2) != 8:
+            raise RuntimeError("invalid MNIST labels header")
+        magic2 = int.from_bytes(header2[0:4], "big")
+        n2 = int.from_bytes(header2[4:8], "big")
+        if magic2 != 2049 or n2 != n:
+            raise RuntimeError("invalid MNIST labels file")
+        labels_raw = flbl.read(int(n2))
+        if len(labels_raw) != int(n2):
+            raise RuntimeError("truncated MNIST labels file")
+    stride = 28 * 28
+    imgs = [data[i * stride : (i + 1) * stride] for i in range(int(n))]
+    labels = [int(b) for b in labels_raw]
+    return imgs, labels
+
+
+def _build_mnist_dataset(spec: PreprocessSpec) -> PreprocessDataset:
+    import logging as _logging
+
+    log = _logging.getLogger("handwriting_ai")
+
+    log.info("_build_mnist_dataset_start root=%s", spec.mnist.root if spec.mnist else None)
+
+    if spec.mnist is None:
+        raise RuntimeError("mnist spec missing details")
+
+    log.info("_build_mnist_dataset_reading_files")
+    import time as _time
+
+    start_read = _time.perf_counter()
+    imgs, labels = _mnist_read_images_labels(spec.mnist.root, bool(spec.mnist.train))
+    read_elapsed_ms = (_time.perf_counter() - start_read) * 1000
+    log.info("_build_mnist_dataset_files_read count=%d elapsed_ms=%.1f", len(imgs), read_elapsed_ms)
+
+    class _Cfg:
+        augment = bool(spec.augment.augment)
+        aug_rotate = float(spec.augment.aug_rotate)
+        aug_translate = float(spec.augment.aug_translate)
+        noise_prob = float(spec.augment.noise_prob)
+        noise_salt_vs_pepper = float(spec.augment.noise_salt_vs_pepper)
+        dots_prob = float(spec.augment.dots_prob)
+        dots_count = int(spec.augment.dots_count)
+        dots_size_px = int(spec.augment.dots_size_px)
+        blur_sigma = float(spec.augment.blur_sigma)
+        morph = str(spec.augment.morph)
+        morph_kernel_px = 1
+        batch_size = 1
+
+    return PreprocessDataset(_MNISTRawDataset(imgs, labels), _Cfg())
