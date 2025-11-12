@@ -479,3 +479,53 @@ def test_run_finally_kills_alive_child(monkeypatch: pytest.MonkeyPatch, tmp_path
     budget = rmod.BudgetConfig(start_pct_max=99.0, abort_pct=99.0, timeout_s=10.0, max_failures=1)
     out = runner.run(ds, cand, samples=1, budget=budget)
     assert out.ok and out.res is not None and int(out.res.batch_size) == 1
+
+
+def test_child_entry_flush_branch_no_flush_handler(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import logging
+
+    import handwriting_ai.training.calibration.runner as rmod
+
+    class _QH:
+        def __init__(self, q: object) -> None:
+            self.q = q
+
+        def setLevel(self, level: int) -> None:  # noqa: N802 - match logging API name
+            return None
+
+        # no flush method
+
+    monkeypatch.setattr(rmod, "_QueueHandler", _QH, raising=True)
+
+    spec = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=1, sleep_s=0.0, fail=False),
+        augment=AugmentSpec(
+            augment=False,
+            aug_rotate=0.0,
+            aug_translate=0.0,
+            noise_prob=0.0,
+            noise_salt_vs_pepper=0.5,
+            dots_prob=0.0,
+            dots_count=0,
+            dots_size_px=1,
+            blur_sigma=0.0,
+            morph="none",
+        ),
+    )
+    out_file = str(tmp_path / "child_nf.txt")
+    from handwriting_ai.training.calibration.candidates import Candidate
+
+    cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=1)
+
+    import multiprocessing as mp
+    from multiprocessing.queues import Queue as MPQueue
+
+    q: MPQueue[logging.LogRecord] = mp.get_context("spawn").Queue()
+    _child_entry(out_file, spec, cand, samples=1, abort_pct=99.0, log_q=q)
+    assert Path(out_file).exists()
+
+
