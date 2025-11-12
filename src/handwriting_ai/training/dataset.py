@@ -138,6 +138,11 @@ class PreprocessDataset(Dataset[tuple[Tensor, Tensor]]):
         t = out.tensor.squeeze(0)
         return t, torch.tensor(int(label), dtype=torch.long)
 
+    @property
+    def knobs(self) -> _AugmentKnobs:
+        """Expose augmentation knobs with precise typing for downstream code."""
+        return self._knobs
+
     # Ensure spawn-pickle safety for subprocess calibration
     def __reduce__(
         self,
