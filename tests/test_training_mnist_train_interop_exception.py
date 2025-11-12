@@ -11,6 +11,7 @@ from torch.utils.data import Dataset
 
 import handwriting_ai.training.mnist_train as mt
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
+from tests._mnist_raw import write_mnist_raw
 
 
 @pytest.fixture(autouse=True)
@@ -86,6 +87,7 @@ def test_train_with_interop_threads_exception(
 
     monkeypatch.setattr(torch, "set_num_interop_threads", _raise_runtime_error, raising=True)
 
+    write_mnist_raw(cfg.data_root, n=8)
     out = train_with_config(cfg, (train_base, test_base))
     assert (out / "model.pt").exists()
     assert (out / "manifest.json").exists()
