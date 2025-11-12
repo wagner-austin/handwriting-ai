@@ -140,10 +140,10 @@ def on_batch_check() -> bool:
 __all__ = [
     "MemoryGuardConfig",
     "compute_memory_guard_config",
-    "set_memory_guard_config",
-    "reset_memory_guard",
-    "on_batch_check",
     "get_memory_guard_config",
+    "on_batch_check",
+    "reset_memory_guard",
+    "set_memory_guard_config",
 ]
 
 
