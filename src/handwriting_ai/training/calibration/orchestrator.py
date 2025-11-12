@@ -246,6 +246,6 @@ class Orchestrator:
 
 
 __all__ = [
-    "OrchestratorConfig",
     "Orchestrator",
+    "OrchestratorConfig",
 ]
