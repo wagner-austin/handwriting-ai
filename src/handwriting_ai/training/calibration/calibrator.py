@@ -131,7 +131,7 @@ def calibrate_input_pipeline(
         )
 
     top_str = ", ".join(_fmt(r) for r in refined[: min(3, len(refined))])
-    log.info("calibration_report " f"candidates={len(cands)} top=[{top_str}] chosen=({_fmt(best)})")
+    log.info(f"calibration_report candidates={len(cands)} top=[{top_str}] chosen=({_fmt(best)})")
 
     _write_cache(cache_path, sig, best)
     # Clear checkpoint on success
