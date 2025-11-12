@@ -1,25 +1,5 @@
 from __future__ import annotations
 
-
-def _build_calibration_spec(cfg: TrainConfig) -> PreprocessSpec:
-    aug_spec = AugmentSpec(
-        augment=bool(cfg.augment),
-        aug_rotate=float(cfg.aug_rotate),
-        aug_translate=float(cfg.aug_translate),
-        noise_prob=float(cfg.noise_prob),
-        noise_salt_vs_pepper=float(cfg.noise_salt_vs_pepper),
-        dots_prob=float(cfg.dots_prob),
-        dots_count=int(cfg.dots_count),
-        dots_size_px=int(cfg.dots_size_px),
-        blur_sigma=float(cfg.blur_sigma),
-        morph=str(cfg.morph),
-    )
-    mnist_spec = MNISTSpec(root=cfg.data_root, train=True)
-    return PreprocessSpec(base_kind="mnist", mnist=mnist_spec, inline=None, augment=aug_spec)
-
-
-from __future__ import annotations
-
 import logging
 from collections.abc import Iterable
 from pathlib import Path
@@ -33,7 +13,8 @@ from handwriting_ai.logging import get_logger, init_logging
 from handwriting_ai.monitoring import log_memory_snapshot, log_system_info
 
 from .artifacts import write_artifacts as _write_artifacts_impl
-from .calibrate import calibrate_input_pipeline`nfrom .calibration.ds_spec import AugmentSpec, MNISTSpec, PreprocessSpec
+from .calibrate import calibrate_input_pipeline
+from .calibration.ds_spec import AugmentSpec, MNISTSpec, PreprocessSpec
 from .dataset import make_loaders as _make_loaders_impl
 from .optim import build_optimizer_and_scheduler as _build_optimizer_and_scheduler
 from .progress import ProgressEmitter
@@ -53,10 +34,6 @@ from .safety import (
 from .train_config import TrainConfig
 from .train_types import MNISTLike, TrainableModel
 from .train_utils import _apply_affine, _build_model, _configure_threads, _ensure_image, _set_seed
-
-if TYPE_CHECKING:
-    from torch.optim.optimizer import Optimizer
-
 
 if TYPE_CHECKING:
     from torch.optim.lr_scheduler import LRScheduler
@@ -97,8 +74,7 @@ def _run_training_loop(
         log_memory_snapshot(context="validation_done")
         dt = _time.perf_counter() - t0
         log.info(
-            f"epoch_done idx={ep} train_loss={train_loss:.4f} "
-            f"val_acc={val_acc:.4f} time_s={dt:.1f}"
+            f"epoch_done idx={ep} train_loss={train_loss:.4f} val_acc={val_acc:.4f} time_s={dt:.1f}"
         )
         log_memory_snapshot(context="epoch_done")
         _emit_epoch(
@@ -242,7 +218,7 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
 
         train_base, test_base = bases
         # Build loaders with resource-aware configuration
-        train_ds, train_loader, test_loader = _make_loaders_impl(
+        _train_ds, train_loader, test_loader = _make_loaders_impl(
             train_base, test_base, cfg, loader_cfg
         )
         # Limit OpenMP/BLAS thread pools alongside ATen threads
@@ -296,13 +272,21 @@ def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
     _set_progress_emitter(emitter)
 
 
-def _build_calibration_spec(cfg: TrainConfig) -> PreprocessSpec:`n    aug_spec = AugmentSpec(`n        augment=bool(cfg.augment),`n        aug_rotate=float(cfg.aug_rotate),`n        aug_translate=float(cfg.aug_translate),`n        noise_prob=float(cfg.noise_prob),`n        noise_salt_vs_pepper=float(cfg.noise_salt_vs_pepper),`n        dots_prob=float(cfg.dots_prob),`n        dots_count=int(cfg.dots_count),`n        dots_size_px=int(cfg.dots_size_px),`n        blur_sigma=float(cfg.blur_sigma),`n        morph=str(cfg.morph),`n    )`n    mnist_spec = MNISTSpec(root=cfg.data_root, train=True)`n    return PreprocessSpec(base_kind="mnist", mnist=mnist_spec, inline=None, augment=aug_spec)`n    # Inline synthetic dataset for environments without MNIST files (e.g., tests)
-    return PreprocessSpec(
-        base_kind="inline",
-        mnist=None,
-        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
-        augment=aug_spec,
+def _build_calibration_spec(cfg: TrainConfig) -> PreprocessSpec:
+    aug_spec = AugmentSpec(
+        augment=bool(cfg.augment),
+        aug_rotate=float(cfg.aug_rotate),
+        aug_translate=float(cfg.aug_translate),
+        noise_prob=float(cfg.noise_prob),
+        noise_salt_vs_pepper=float(cfg.noise_salt_vs_pepper),
+        dots_prob=float(cfg.dots_prob),
+        dots_count=int(cfg.dots_count),
+        dots_size_px=int(cfg.dots_size_px),
+        blur_sigma=float(cfg.blur_sigma),
+        morph=str(cfg.morph),
     )
+    mnist_spec = MNISTSpec(root=cfg.data_root, train=True)
+    return PreprocessSpec(base_kind="mnist", mnist=mnist_spec, inline=None, augment=aug_spec)
 
 
 def _memory_tier_name(memory_bytes: int | None) -> str:
@@ -347,22 +331,20 @@ def _configure_memory_guard_from_limits(cfg: TrainConfig, limits: ResourceLimits
 
 
 __all__ = [
-    "TrainConfig",
     "MNISTLike",
+    "TrainConfig",
     "TrainableModel",
-    "_configure_memory_guard_from_limits",
-    "_configure_interop_threads",
     "_apply_affine",
-    "_ensure_image",
-    "_set_seed",
     "_build_model",
     "_build_optimizer_and_scheduler",
+    "_configure_interop_threads",
+    "_configure_memory_guard_from_limits",
     "_configure_threads",
+    "_ensure_image",
     "_evaluate",
+    "_set_seed",
     "_train_epoch",
     "make_loaders",
-    "train_with_config",
     "set_progress_emitter",
+    "train_with_config",
 ]
-
-
