@@ -7,6 +7,7 @@ from PIL import Image
 
 from handwriting_ai.training.calibration.calibrator import calibrate_input_pipeline as _cal
 from handwriting_ai.training.calibration.candidates import Candidate
+from handwriting_ai.training.calibration.ds_spec import AugmentSpec, InlineSpec, PreprocessSpec
 from handwriting_ai.training.calibration.measure import CalibrationResult
 from handwriting_ai.training.calibration.orchestrator import OrchestratorConfig
 from handwriting_ai.training.dataset import PreprocessDataset
@@ -71,7 +72,36 @@ def test_calibrator_low_mem_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "handwriting_ai.training.calibration.calibrator.get_memory_snapshot", lambda: _Snap()
     )
-    base = _FakeMNIST(8)
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=2,
         memory_bytes=1024 * 1024 * 1024,
@@ -80,7 +110,7 @@ def test_calibrator_low_mem_branch(monkeypatch: pytest.MonkeyPatch) -> None:
         max_batch_size=None,
     )
     _cal(
-        train_base=base,
+        base,
         limits=limits,
         requested_batch_size=4,
         samples=1,
@@ -132,7 +162,24 @@ def test_calibrator_high_mem_branch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         "handwriting_ai.training.calibration.calibrator.get_memory_snapshot", lambda: _Snap()
     )
-    base = _FakeMNIST(8)
+    aug = AugmentSpec(
+        augment=False,
+        aug_rotate=0.0,
+        aug_translate=0.0,
+        noise_prob=0.0,
+        noise_salt_vs_pepper=0.5,
+        dots_prob=0.0,
+        dots_count=0,
+        dots_size_px=1,
+        blur_sigma=0.0,
+        morph="none",
+    )
+    base = PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
+        augment=aug,
+    )
     limits = ResourceLimits(
         cpu_cores=4,
         memory_bytes=4 * 1024 * 1024 * 1024,
@@ -141,7 +188,7 @@ def test_calibrator_high_mem_branch(monkeypatch: pytest.MonkeyPatch) -> None:
         max_batch_size=None,
     )
     _cal(
-        train_base=base,
+        base,
         limits=limits,
         requested_batch_size=4,
         samples=1,
