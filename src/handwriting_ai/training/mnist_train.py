@@ -1,5 +1,25 @@
 from __future__ import annotations
 
+
+def _build_calibration_spec(cfg: TrainConfig) -> PreprocessSpec:
+    aug_spec = AugmentSpec(
+        augment=bool(cfg.augment),
+        aug_rotate=float(cfg.aug_rotate),
+        aug_translate=float(cfg.aug_translate),
+        noise_prob=float(cfg.noise_prob),
+        noise_salt_vs_pepper=float(cfg.noise_salt_vs_pepper),
+        dots_prob=float(cfg.dots_prob),
+        dots_count=int(cfg.dots_count),
+        dots_size_px=int(cfg.dots_size_px),
+        blur_sigma=float(cfg.blur_sigma),
+        morph=str(cfg.morph),
+    )
+    mnist_spec = MNISTSpec(root=cfg.data_root, train=True)
+    return PreprocessSpec(base_kind="mnist", mnist=mnist_spec, inline=None, augment=aug_spec)
+
+
+from __future__ import annotations
+
 import logging
 from collections.abc import Iterable
 from pathlib import Path
@@ -13,7 +33,7 @@ from handwriting_ai.logging import get_logger, init_logging
 from handwriting_ai.monitoring import log_memory_snapshot, log_system_info
 
 from .artifacts import write_artifacts as _write_artifacts_impl
-from .calibrate import calibrate_input_pipeline
+from .calibrate import calibrate_input_pipeline`nfrom .calibration.ds_spec import AugmentSpec, MNISTSpec, PreprocessSpec
 from .dataset import make_loaders as _make_loaders_impl
 from .optim import build_optimizer_and_scheduler as _build_optimizer_and_scheduler
 from .progress import ProgressEmitter
@@ -181,10 +201,14 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
     # Configure memory guard BEFORE calibration to protect against OOM during measurement
     _configure_memory_guard_from_limits(cfg, limits)
     # Always run empirical preflight calibration to avoid heuristic drift.
-    cache_path = Path("artifacts") / "calibration.json"
+    # Use out_dir for cache/checkpoint to ensure test isolation
+    cfg.out_dir.mkdir(parents=True, exist_ok=True)
+    cache_path = cfg.out_dir / "calibration.json"
     ttl_s = 7 * 24 * 60 * 60
+    # Build explicit dataset spec for calibration (no dataset pickling across processes)
+    ds_spec = _build_calibration_spec(cfg)
     ec = calibrate_input_pipeline(
-        bases[0],
+        ds_spec,
         limits=limits,
         requested_batch_size=int(ec.batch_size),
         samples=max(1, int(cfg.calibration_samples)),
@@ -272,6 +296,15 @@ def set_progress_emitter(emitter: ProgressEmitter | None) -> None:
     _set_progress_emitter(emitter)
 
 
+def _build_calibration_spec(cfg: TrainConfig) -> PreprocessSpec:`n    aug_spec = AugmentSpec(`n        augment=bool(cfg.augment),`n        aug_rotate=float(cfg.aug_rotate),`n        aug_translate=float(cfg.aug_translate),`n        noise_prob=float(cfg.noise_prob),`n        noise_salt_vs_pepper=float(cfg.noise_salt_vs_pepper),`n        dots_prob=float(cfg.dots_prob),`n        dots_count=int(cfg.dots_count),`n        dots_size_px=int(cfg.dots_size_px),`n        blur_sigma=float(cfg.blur_sigma),`n        morph=str(cfg.morph),`n    )`n    mnist_spec = MNISTSpec(root=cfg.data_root, train=True)`n    return PreprocessSpec(base_kind="mnist", mnist=mnist_spec, inline=None, augment=aug_spec)`n    # Inline synthetic dataset for environments without MNIST files (e.g., tests)
+    return PreprocessSpec(
+        base_kind="inline",
+        mnist=None,
+        inline=InlineSpec(n=8, sleep_s=0.0, fail=False),
+        augment=aug_spec,
+    )
+
+
 def _memory_tier_name(memory_bytes: int | None) -> str:
     """Return human-readable tier name for logging."""
     if memory_bytes is None:
@@ -331,3 +364,5 @@ __all__ = [
     "train_with_config",
     "set_progress_emitter",
 ]
+
+
