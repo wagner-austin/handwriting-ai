@@ -25,6 +25,7 @@ from handwriting_ai.training.mnist_train import (
     make_loaders,
     train_with_config,
 )
+from tests._mnist_raw import write_mnist_raw
 
 
 @pytest.fixture(autouse=True)
@@ -155,6 +156,7 @@ def test_train_with_config_writes_artifacts(tmp_path: Path) -> None:
     cfg = replace(cfg, out_dir=tmp_path / "out")
     train_base = _TinyBase(4)
     test_base = _TinyBase(2)
+    write_mnist_raw(cfg.data_root, n=8)
     out_dir = train_with_config(cfg, (train_base, test_base))
     assert (out_dir / "model.pt").exists()
     assert (out_dir / "manifest.json").exists()
@@ -173,6 +175,7 @@ def test_train_with_scheduler_and_early_stop(tmp_path: Path) -> None:
     )
     train_base = _TinyBase(6)
     test_base = _TinyBase(2)
+    write_mnist_raw(cfg.data_root, n=8)
     out_dir = train_with_config(cfg, (train_base, test_base))
     assert (out_dir / "model.pt").exists()
 
@@ -195,6 +198,7 @@ def test_train_calls_evaluate_in_epoch(tmp_path: Path) -> None:
         return _orig(model, loader, device)
 
     mt._evaluate = _spy  # patch
+    write_mnist_raw(cfg.data_root, n=8)
     out_dir = train_with_config(cfg, (train_base, test_base))
     assert (out_dir / "model.pt").exists()
     assert called["n"] >= 1
@@ -220,6 +224,7 @@ def test_train_interrupt_saves_artifact(tmp_path: Path, monkeypatch: pytest.Monk
 
     # Patch with automatic restoration to avoid cross-test leakage
     monkeypatch.setattr(mt, "_train_epoch", _boom, raising=True)
+    write_mnist_raw(cfg.data_root, n=8)
     out_dir = train_with_config(cfg, (train_base, test_base))
     # Even when interrupted, we should still write current/best weights and manifest
     assert (out_dir / "model.pt").exists()
@@ -252,6 +257,7 @@ def test_train_threads_log_branch_no_interop(tmp_path: Path) -> None:
     if had_attr:
         delattr(_torch, "get_num_interop_threads")
     try:
+        write_mnist_raw(cfg.data_root, n=8)
         out_dir = train_with_config(cfg, (train_base, test_base))
         assert (out_dir / "model.pt").exists()
     finally:
