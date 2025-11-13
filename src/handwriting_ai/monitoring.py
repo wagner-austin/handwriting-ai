@@ -356,6 +356,15 @@ def _detect_cgroups_available() -> bool:
     return _CGROUP_MEM_CURRENT.exists()
 
 
+def is_cgroup_available() -> bool:
+    """Public helper to indicate whether cgroup memory metrics are available.
+
+    Used by components that need to adapt behavior (e.g., calibration preflight)
+    when running outside containerized environments.
+    """
+    return _detect_cgroups_available()
+
+
 def _create_monitor() -> MemoryMonitor:
     """Create appropriate memory monitor based on environment."""
     if _detect_cgroups_available():
@@ -424,6 +433,7 @@ __all__ = [
     "check_memory_pressure",
     "get_memory_snapshot",
     "get_monitor",
+    "is_cgroup_available",
     "log_memory_snapshot",
     "log_system_info",
 ]
