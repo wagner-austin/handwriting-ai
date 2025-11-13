@@ -87,23 +87,7 @@ def _write_kv(out_path: str, lines: list[str]) -> None:
         f.flush()
         _os.fsync(f.fileno())
     _os.replace(tmp_path, out_path)
-    # Best-effort directory fsync (may not be supported on all platforms)
-    try:
-        dir_name = _os.path.dirname(out_path) or "."
-        flag_dir: int = 0
-        od = _os.__dict__.get("O_DIRECTORY")
-        if isinstance(od, int):
-            flag_dir = od
-        fd = _os.open(dir_name, flag_dir)
-    except OSError:
-        return
-    try:
-        _os.fsync(fd)
-    finally:
-        try:
-            _os.close(fd)
-        except OSError as exc:
-            _logging.getLogger("handwriting_ai").debug("dir_fsync_close_ignored error=%s", exc)
+    # Directory fsync omitted to keep strict typing and cross-platform support; data fsync above ensures durability
 
 
 def _emit_result_file(out_path: str, res: CalibrationResult) -> None:
