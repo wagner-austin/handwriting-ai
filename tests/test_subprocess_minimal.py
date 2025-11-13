@@ -2,28 +2,23 @@
 
 import logging
 import multiprocessing as mp
-import sys
 
 
 def child_func(msg: str) -> str:
     """Child process function."""
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,  # Force stderr
-    )
-    log = logging.getLogger("test")
+    from handwriting_ai.logging import init_logging
+
+    init_logging()
+    log = logging.getLogger("handwriting_ai")
     log.info(f"CHILD_START: {msg}")
     return "OK"
 
 
 if __name__ == "__main__":
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(message)s",
-        stream=sys.stderr,
-    )
-    log = logging.getLogger("test")
+    from handwriting_ai.logging import init_logging
+
+    init_logging()
+    log = logging.getLogger("handwriting_ai")
 
     log.info("PARENT_START: About to spawn child")
 
