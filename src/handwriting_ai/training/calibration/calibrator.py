@@ -136,24 +136,7 @@ def calibrate_input_pipeline(
     _write_cache(cache_path, sig, best)
     # Clear checkpoint on success
     ckpt_path.unlink(missing_ok=True)
-    # Build effective config from best candidate but honor requested batch cap.
-    # Calibration explores micro-batch sizes for throughput, but the service
-    # persists and trains with the requested batch size bounded by resource
-    # limits to avoid drift across environments.
-    eff = _result_to_effective(best)
-    bs_final = int(max(1, int(requested_batch_size)))
-    return EffectiveConfig(
-        intra_threads=eff.intra_threads,
-        interop_threads=eff.interop_threads,
-        batch_size=bs_final,
-        loader_cfg=DataLoaderConfig(
-            batch_size=bs_final,
-            num_workers=eff.loader_cfg.num_workers,
-            pin_memory=eff.loader_cfg.pin_memory,
-            persistent_workers=eff.loader_cfg.persistent_workers,
-            prefetch_factor=eff.loader_cfg.prefetch_factor,
-        ),
-    )
+    return _result_to_effective(best)
 
 
 @dataclass(frozen=True)
