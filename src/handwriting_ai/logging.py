@@ -233,16 +233,30 @@ def _env_level() -> int:
 
 
 def init_logging(style: LogStyle = "auto") -> logging.Logger:
+    """Initialize or refresh the project logger.
+
+    Robust against stdout replacements (e.g., pytest capsys) by re-binding any
+    existing StreamHandler to the current sys.stdout and updating its formatter
+    and level. Ensures one active StreamHandler without duplicating handlers.
+    """
     logger = logging.getLogger(_LOGGER_NAME)
     lvl = _env_level()
     logger.setLevel(lvl)
-    # Avoid duplicate handlers if called multiple times (tests/process reuse)
-    if not _has_stream_handler(logger):
-        handler = logging.StreamHandler(stream=sys.stdout)
-        handler.setFormatter(_choose_formatter(style))
-        handler.setLevel(lvl)
-        logger.addHandler(handler)
-        logger.propagate = False
+    # Decide propagation upfront from environment so tests can opt-in
+    propagate_env = _env_truthy("HANDWRITING_LOG_PROPAGATE") or _env_truthy("LOG_PROPAGATE")
+    logger.propagate = bool(propagate_env)
+
+    # Ensure exactly one StreamHandler bound to current stdout
+    formatter = _choose_formatter(style)
+    for h in list(logger.handlers):
+        if isinstance(h, logging.StreamHandler):
+            logger.removeHandler(h)
+
+    handler = logging.StreamHandler(stream=sys.stdout)
+    handler.setFormatter(formatter)
+    handler.setLevel(lvl)
+    logger.addHandler(handler)
+
     return logger
 
 
