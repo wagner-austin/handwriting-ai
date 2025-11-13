@@ -10,6 +10,7 @@ from typing import Literal
 
 from handwriting_ai.config import Settings
 from handwriting_ai.inference.manifest import ModelManifest
+from handwriting_ai.logging import init_logging
 
 
 @dataclass(frozen=True)
@@ -119,6 +120,8 @@ def _env_truthy(v: str | None) -> bool:
 
 
 def main() -> None:
+    # Ensure logging is initialized and honors propagation settings for tests
+    init_logging()
     # Load settings (env + optional TOML) to determine model_dir and active model
     settings = Settings.load()
     seed_root = Path("/seed/digits/models")
@@ -134,7 +137,9 @@ def main() -> None:
     backup_dir = Path(backup_dir_env)
 
     action = apply_seed(plan, policy=policy, backup=backup_enabled, backup_dir=backup_dir)
-    print(f"prestart seed_policy={policy} action={action} model_id={plan.model_id}")
+    logging.getLogger("handwriting_ai").info(
+        "prestart seed_policy=%s action=%s model_id=%s", policy, action, plan.model_id
+    )
 
 
 if __name__ == "__main__":  # pragma: no cover - used at runtime
