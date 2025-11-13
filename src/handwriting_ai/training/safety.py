@@ -3,7 +3,10 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 
-from handwriting_ai.monitoring import check_memory_pressure, get_memory_snapshot
+from handwriting_ai.monitoring import (
+    check_memory_pressure,
+    get_memory_snapshot,
+)
 
 from .memory_diagnostics import record_batch_memory
 
@@ -114,7 +117,8 @@ def on_batch_check() -> bool:
             limit_mb,
             thr,
         )
-    # Check if we've crossed the abort threshold
+    # Enforce based on configured threshold irrespective of cgroup availability.
+    # Monitoring.check_memory_pressure already adapts to cgroup or system metrics.
     pressed = check_memory_pressure(threshold_percent=thr)
     if pressed:
         _consecutive += 1
