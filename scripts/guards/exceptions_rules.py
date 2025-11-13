@@ -16,10 +16,12 @@ class ExceptionsRule:
         out: list[Violation] = []
         for f in files:
             lines = read_lines(f)
-            in_src = f.as_posix().startswith("src/")
+            under_src = "src" in f.parts
             for i, raw in enumerate(lines, start=1):
                 line = raw.rstrip()
-                if in_src and self._pat_suppress.search(line):
+                # Flag contextlib.suppress in application sources; callers that
+                # want to scan other paths can pass specific files directly.
+                if under_src and self._pat_suppress.search(line):
                     out.append(Violation(f, i, "suppress", line))
             out.extend(_scan_silent_excepts(f, lines))
         return out
@@ -29,8 +31,6 @@ def _scan_silent_excepts(path: Path, lines: list[str]) -> list[Violation]:
     out: list[Violation] = []
     n = len(lines)
     idx = 0
-    path_str = path.as_posix()
-    in_src = path_str.startswith("src/")
 
     while idx < n:
         raw = lines[idx]
@@ -40,10 +40,10 @@ def _scan_silent_excepts(path: Path, lines: list[str]) -> list[Violation]:
         indent = len(raw) - len(raw.lstrip(" \t"))
         next_idx, found_raise, found_log = _block_signals(lines, idx + 1, indent)
         func_name = _enclosing_function_name(lines, idx, indent)
-        # Enforce "must raise in except" across source files by default,
-        # but allow specific functions/modules to log-and-continue when
-        # explicitly permitted by policy below.
-        strict = bool(in_src and (func_name != "run_forever"))
+        # Enforce "must raise in except" for application sources; for other
+        # paths (tests, scripts), allow log-and-continue.
+        under_src = "src" in path.parts
+        strict = bool(under_src and (func_name != "run_forever"))
         ok = found_raise if strict else (found_raise or found_log)
         if not ok:
             out.append(Violation(path, idx + 1, "silent-except", raw.rstrip()))
