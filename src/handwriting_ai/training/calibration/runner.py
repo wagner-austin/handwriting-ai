@@ -87,7 +87,8 @@ def _write_kv(out_path: str, lines: list[str]) -> None:
         f.flush()
         _os.fsync(f.fileno())
     _os.replace(tmp_path, out_path)
-    # Directory fsync omitted to keep strict typing and cross-platform support; data fsync above ensures durability
+    # Note: directory fsync intentionally omitted. File fsync above is
+    # sufficient for our IPC durability requirements across platforms.
 
 
 def _emit_result_file(out_path: str, res: CalibrationResult) -> None:
