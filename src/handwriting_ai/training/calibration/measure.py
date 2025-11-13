@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import gc as _gc
+from collections.abc import Callable
 from collections.abc import Iterable as _Iter
 from dataclasses import dataclass
 from statistics import quantiles
@@ -183,7 +184,12 @@ def _measure_training(
         _gc.collect()
 
 
-def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> CalibrationResult:
+def _measure_candidate(
+    ds: PreprocessDataset,
+    cand: Candidate,
+    samples: int,
+    on_improvement: Callable[[CalibrationResult], None] | None = None,
+) -> CalibrationResult:
     """Measure a candidate using real training steps with binary search for safe batch size."""
     import logging as _logging
 
@@ -251,6 +257,17 @@ def _measure_candidate(ds: PreprocessDataset, cand: Candidate, samples: int) -> 
                     mid + 1,
                     bs_hi,
                 )
+                # Stream best-so-far result to parent, if requested
+                if on_improvement is not None:
+                    res_cur = CalibrationResult(
+                        intra_threads=cand.intra_threads,
+                        interop_threads=cand.interop_threads,
+                        num_workers=cand.num_workers,
+                        batch_size=mid,
+                        samples_per_sec=sps,
+                        p95_ms=p95,
+                    )
+                    on_improvement(res_cur)
                 bs_lo = mid + 1
             else:
                 _logging.getLogger("handwriting_ai").info(
