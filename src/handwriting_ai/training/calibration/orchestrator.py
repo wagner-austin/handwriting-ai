@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from handwriting_ai.logging import get_logger
-from handwriting_ai.monitoring import get_memory_snapshot
+from handwriting_ai.monitoring import get_memory_snapshot, is_cgroup_available
 from handwriting_ai.training.calibration.candidates import Candidate
 from handwriting_ai.training.calibration.checkpoint import (
     CalibrationCheckpoint,
@@ -39,6 +39,12 @@ class Orchestrator:
         self._log = get_logger()
 
     def _preflight_ok(self, start_pct_max: float) -> bool:
+        # Only enforce preflight memory gate when cgroup memory limits are
+        # available (container environments). In non-cgroup environments,
+        # system-wide memory utilization can be high and noisy; allow
+        # calibration to proceed to avoid false aborts.
+        if not is_cgroup_available():
+            return True
         snap = get_memory_snapshot()
         return float(snap.cgroup_usage.percent) <= float(start_pct_max)
 
