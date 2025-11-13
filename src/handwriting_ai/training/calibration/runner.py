@@ -105,10 +105,29 @@ def _child_entry(
             log.removeHandler(h)
     log.propagate = False
 
-    # Bridge child logs to parent via standard QueueHandler
-    _qh = _QueueHandler(log_q)
-    _qh.setLevel(log.level)
-    log.addHandler(_qh)
+    # Bridge child logs to parent via a handler that is guaranteed to
+    # implement logging.Handler. If a test stubs _QueueHandler with a minimal
+    # object, adapt it to a proper handler to avoid runtime errors.
+
+    class _ForwardingQueueHandler(_logging.Handler):
+        """Handler that forwards records to a multiprocessing Queue."""
+
+        def __init__(self, q: _mp.Queue[_logging.LogRecord]) -> None:
+            super().__init__()
+            self._q = q
+
+        def emit(self, record: _logging.LogRecord) -> None:  # pragma: no cover - trivial
+            # Best-effort forwarding; never raise from logging path
+            with suppress(Exception):
+                self._q.put(record)
+
+    raw_handler = _QueueHandler(log_q)
+    if isinstance(raw_handler, _logging.Handler):
+        q_handler: _logging.Handler = raw_handler
+    else:
+        q_handler = _ForwardingQueueHandler(log_q)
+    q_handler.setLevel(log.level)
+    log.addHandler(q_handler)
     start_entry = _time.perf_counter()
 
     # Log immediately to prove we got here
