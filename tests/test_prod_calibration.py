@@ -4,16 +4,20 @@ import gzip
 import tempfile
 from pathlib import Path
 
+from handwriting_ai.logging import get_logger as _get_logger
+from handwriting_ai.logging import init_logging as _init_logging
 from handwriting_ai.training.mnist_train import TrainConfig, train_with_config
 
 if __name__ == "__main__":
     # Simulate production environment
+    _init_logging()
+    _log = _get_logger()
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
 
         # Create MNIST raw files (simulating production data)
         data_root = tmp_path / "data"
-        print(f"Creating MNIST raw files in {data_root}...")
+        _log.info("prod_cal_create_mnist root=%s", data_root)
 
         # Create both train and test files
         raw_dir = data_root / "MNIST" / "raw"
@@ -43,7 +47,7 @@ if __name__ == "__main__":
 
         write_mnist_files("train", 1000)
         write_mnist_files("t10k", 200)
-        print("Created MNIST files: 1000 train, 200 test samples")
+        _log.info("prod_cal_created_mnist train=%d test=%d", 1000, 200)
 
         # Production-like config
         cfg = TrainConfig(
@@ -72,15 +76,11 @@ if __name__ == "__main__":
             force_calibration=True,  # Force run, ignore cache
         )
 
-        print("\n=== Starting Production Calibration Test ===")
-        print("Dataset: MNIST with 1000 samples")
-        print(f"Calibration samples: {cfg.calibration_samples}")
-        print(f"Requested batch size: {cfg.batch_size}")
-        print("\nWatch for calibration logs showing:")
-        print("  - calibration_child_started (proves spawn works)")
-        print("  - calibration_child_guard_set (proves MNIST loading works)")
-        print("  - calibration_child_measure_complete (proves measurement works)")
-        print("\n" + "=" * 60 + "\n")
+        _log.info(
+            "prod_cal_start samples=%d batch_size=%d",
+            cfg.calibration_samples,
+            cfg.batch_size,
+        )
 
         # Create custom MNIST wrapper for raw files
         from PIL import Image
@@ -119,15 +119,10 @@ if __name__ == "__main__":
         test_base = RawMNIST(data_root, train=False)
 
         # Run training (will trigger calibration with MNIST path)
-        print("Starting training with calibration...")
+        _log.info("prod_cal_training_start")
         try:
             model_dir = train_with_config(cfg, (train_base, test_base))
-            print("\n" + "=" * 60)
-            print("SUCCESS! Production calibration completed without timeout")
-            print(f"Model saved to: {model_dir}")
-            print("=" * 60 + "\n")
+            _log.info("prod_cal_success model_dir=%s", model_dir)
         except Exception as e:
-            print("\n" + "=" * 60)
-            print(f"FAILED: {e}")
-            print("=" * 60 + "\n")
+            _log.error("prod_cal_failed error=%s", e)
             raise
