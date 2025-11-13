@@ -247,12 +247,17 @@ def train_with_config(cfg: TrainConfig, bases: tuple[MNISTLike, MNISTLike]) -> P
         # Write artifacts via helper
         sd = best_sd if best_sd is not None else model.state_dict()
         val = float(best_val if best_val >= 0 else _evaluate(model, test_loader, device))
+        # Persist the requested batch size bounded by resource limits, not the
+        # micro-batch used during calibration measurement.
+        persist_bs = int(cfg.batch_size)
+        if limits.max_batch_size is not None and persist_bs > int(limits.max_batch_size):
+            persist_bs = int(limits.max_batch_size)
         model_dir = _write_artifacts_impl(
             out_dir=cfg.out_dir,
             model_id=cfg.model_id,
             model_state=sd,
             epochs=cfg.epochs,
-            batch_size=loader_cfg.batch_size,
+            batch_size=persist_bs,
             lr=cfg.lr,
             seed=cfg.seed,
             device_str=cfg.device,
