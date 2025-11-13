@@ -90,7 +90,11 @@ def _write_kv(out_path: str, lines: list[str]) -> None:
     # Best-effort directory fsync (may not be supported on all platforms)
     try:
         dir_name = _os.path.dirname(out_path) or "."
-        fd = _os.open(dir_name, getattr(_os, "O_DIRECTORY", 0))
+        flag_dir: int = 0
+        od = _os.__dict__.get("O_DIRECTORY")
+        if isinstance(od, int):
+            flag_dir = od
+        fd = _os.open(dir_name, flag_dir)
     except OSError:
         return
     try:
