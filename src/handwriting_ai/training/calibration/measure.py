@@ -8,6 +8,7 @@ from statistics import quantiles
 import torch
 from torch.utils.data import DataLoader
 
+from handwriting_ai.monitoring import is_cgroup_available
 from handwriting_ai.training.calibration.candidates import Candidate
 from handwriting_ai.training.dataset import DataLoaderConfig, PreprocessDataset
 from handwriting_ai.training.optim import build_optimizer_and_scheduler as _build_optim
@@ -157,7 +158,10 @@ def _measure_training(
             pct = float(get_memory_snapshot().cgroup_usage.percent)
             if pct > peak_pct:
                 peak_pct = pct
-            if pct >= thr:
+            # Enforce calibration backoff under two conditions:
+            # 1) threshold <= 0.0 explicitly forces backoff (used in tests), or
+            # 2) running under cgroup limits and usage exceeds threshold.
+            if (thr <= 0.0) or (is_cgroup_available() and pct >= thr):
                 exceeded = True
             if seen >= n_batches:
                 break
