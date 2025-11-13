@@ -74,9 +74,32 @@ def _encode_result_kv(res: CalibrationResult) -> list[str]:
 
 
 def _write_kv(out_path: str, lines: list[str]) -> None:
-    """Write key=value lines to a file (UTF-8)."""
-    with open(out_path, "w", encoding="utf-8") as f:
-        f.write("\n".join(lines))
+    """Write key=value lines atomically and durably.
+
+    Writes to a temporary file, flushes and fsyncs content, then replaces the
+    destination file. Attempts a directory fsync best-effort to reduce the
+    chance of metadata lag on some filesystems.
+    """
+    tmp_path = f"{out_path}.tmp"
+    content = "\n".join(lines)
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        f.write(content)
+        f.flush()
+        _os.fsync(f.fileno())
+    _os.replace(tmp_path, out_path)
+    # Best-effort directory fsync (may not be supported on all platforms)
+    try:
+        dir_name = _os.path.dirname(out_path) or "."
+        fd = _os.open(dir_name, getattr(_os, "O_DIRECTORY", 0))
+    except OSError:
+        return
+    try:
+        _os.fsync(fd)
+    finally:
+        try:
+            _os.close(fd)
+        except OSError as exc:
+            _logging.getLogger("handwriting_ai").debug("dir_fsync_close_ignored error=%s", exc)
 
 
 def _emit_result_file(out_path: str, res: CalibrationResult) -> None:
@@ -160,8 +183,12 @@ def _child_entry(
         guard_elapsed = _time.perf_counter() - start_guard
         log.info("calibration_child_guard_set elapsed_ms=%.1f", guard_elapsed * 1000)
 
+        # Stream best-so-far so the parent can pick up a viable result early
+        def _on_improvement(r: CalibrationResult) -> None:
+            _emit_result_file(out_path, r)  # pragma: no cover (subprocess)
+
         start_measure = _time.perf_counter()
-        res = _measure_candidate(ds, cand, samples)
+        res = _measure_candidate(ds, cand, samples, on_improvement=_on_improvement)
         measure_elapsed = _time.perf_counter() - start_measure
         log.info("calibration_child_measure_complete elapsed_s=%.1f", measure_elapsed)
 
