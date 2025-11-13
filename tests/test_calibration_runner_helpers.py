@@ -485,17 +485,32 @@ def test_child_entry_flush_branch_no_flush_handler(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import logging
+    import multiprocessing as mp
+    from multiprocessing.queues import Queue as MPQueue
 
     import handwriting_ai.training.calibration.runner as rmod
 
-    class _QH:
-        def __init__(self, q: object) -> None:
+    class _QH(logging.Handler):
+        """Minimal queue handler that appears to lack a usable ``flush``.
+
+        Subclasses logging.Handler to keep types strict while exercising the
+        branch that checks for a flush attribute without providing one that
+        can be called successfully.
+        """
+
+        def __init__(self, q: MPQueue[logging.LogRecord]) -> None:
+            super().__init__()
             self.q = q
 
-        def setLevel(self, level: int) -> None:  # noqa: N802 - match logging API name
-            return None
+        def emit(self, record: logging.LogRecord) -> None:
+            """Emit a record by putting it in the queue."""
+            self.q.put_nowait(record)
 
-        # no flush method
+        def __getattr__(self, name: str) -> object:
+            """Pretend that 'flush' does not exist for hasattr checks."""
+            if name == "flush":
+                raise AttributeError(f"'{type(self).__name__}' object has no attribute 'flush'")
+            raise AttributeError(name)
 
     monkeypatch.setattr(rmod, "_QueueHandler", _QH, raising=True)
 
@@ -521,11 +536,12 @@ def test_child_entry_flush_branch_no_flush_handler(
 
     cand = Candidate(intra_threads=1, interop_threads=None, num_workers=0, batch_size=1)
 
-    import multiprocessing as mp
-    from multiprocessing.queues import Queue as MPQueue
-
     q: MPQueue[logging.LogRecord] = mp.get_context("spawn").Queue()
     _child_entry(out_file, spec, cand, samples=1, abort_pct=99.0, log_q=q)
+    # Cleanup: remove our stub handler if it was attached
+    app_log = logging.getLogger("handwriting_ai")
+    for h in list(app_log.handlers):
+        if h.__class__.__name__ == _QH.__name__:
+            app_log.removeHandler(h)
     assert Path(out_file).exists()
-
-
+    _child_entry(out_file, spec, cand, samples=1, abort_pct=99.0, log_q=q)
