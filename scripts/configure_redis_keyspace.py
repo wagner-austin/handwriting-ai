@@ -11,9 +11,8 @@ from __future__ import annotations
 
 import os
 import sys
-from contextlib import suppress
 
-from handwriting_ai.logging import get_logger
+from handwriting_ai.logging import get_logger, init_logging
 
 
 def configure_keyspace_notifications(redis_url: str) -> None:
@@ -31,7 +30,8 @@ def configure_keyspace_notifications(redis_url: str) -> None:
     """
     import redis
 
-    print(f"Connecting to Redis: {redis_url[:35]}...")
+    log = get_logger()
+    log.info("redis_config_connect url=%s", redis_url[:35])
 
     try:
         client = redis.Redis.from_url(redis_url, decode_responses=True)
@@ -39,21 +39,21 @@ def configure_keyspace_notifications(redis_url: str) -> None:
         # Test connection
         if not client.ping():
             raise RuntimeError("Redis ping failed")
-        print("Connected to Redis")
+        log.info("redis_config_ping ok=true")
 
         # Get current config
         current_config = client.config_get("notify-keyspace-events")
         current_value = current_config.get("notify-keyspace-events", "")
-        print(f"Current notify-keyspace-events: '{current_value}'")
+        log.info("redis_config_current value=%s", current_value)
 
         # Check if keyspace notifications already enabled (order doesn't matter)
         if "K" in current_value and "z" in current_value:
-            print(f"Already configured with '{current_value}' (contains both K and z)")
+            log.info("redis_config_already_configured value=%s", current_value)
         else:
             # Set keyspace notifications
             target_value = "Kz"
             client.config_set("notify-keyspace-events", target_value)
-            print(f"Set notify-keyspace-events to '{target_value}'")
+            log.info("redis_config_set value=%s", target_value)
 
             # Verify it was set (check contains K and z, not exact match)
             verify_config = client.config_get("notify-keyspace-events")
@@ -62,38 +62,45 @@ def configure_keyspace_notifications(redis_url: str) -> None:
                 raise RuntimeError(
                     f"Config verification failed: expected K and z, got '{verify_value}'"
                 )
-            print(f"Verified configuration: '{verify_value}'")
+            log.info("redis_config_verify value=%s", verify_value)
 
         # Show what this enables
-        print("\nKeyspace notifications enabled:")
-        print("  K = Keyspace events (publishes on key changes)")
-        print("  z = Sorted set commands (RQ job registries)")
-        print("\nWatcher can now subscribe to: __keyspace@0__:rq:registry:*:queue")
+        log.info("redis_config_enabled_notes details=K:keyspace_events,z:sorted_set_commands")
 
     except redis.RedisError as e:
         raise RuntimeError(f"Redis configuration failed: {e}") from e
     finally:
-        with suppress(Exception):
+        try:
             client.close()
+        except (OSError, RuntimeError, ValueError) as e:  # pragma: no cover - defensive
+            import logging as _logging
+
+            _logging.getLogger("handwriting_ai").debug("redis_config_close_ignored error=%s", e)
 
 
 def main() -> None:
     """Run keyspace notification configuration from environment."""
+    init_logging()
     redis_url = os.getenv("REDIS_URL", "").strip()
     if not redis_url:
-        print("ERROR: REDIS_URL environment variable not set", file=sys.stderr)
-        print("\nUsage:", file=sys.stderr)
-        print("  REDIS_URL=redis://... python scripts/configure_redis_keyspace.py", file=sys.stderr)
+        get_logger().error("redis_config_missing_url")
         sys.exit(1)
 
     try:
         configure_keyspace_notifications(redis_url)
-        print("\nConfiguration complete")
+        # Human-friendly confirmation via structured logging
+        get_logger().info("Configuration complete")
     except (RuntimeError, OSError, ValueError) as e:
         # Log via structured logger and re-raise to ensure non-zero exit without silent except
         get_logger().error("redis_keyspace_config_failed error=%s", e)
         raise
 
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__":  # pragma: no cover
+    # Delegate to the importable module to honor monkeypatching in tests
+    # (runpy.run_module executes this file as __main__, separate from
+    # scripts.configure_redis_keyspace already imported and patched).
+    import importlib as _importlib
+
+    _mod = _importlib.import_module("scripts.configure_redis_keyspace")
+    _mod.main()
